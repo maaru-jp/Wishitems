@@ -479,8 +479,21 @@
       var wishListCache = [];
       var currentWishPage = 1;
       var wishTotalPages = 1;
-      /** 集氣動態：有設定 WISH_LIST_URL 時由伺服器載入；null 表示改讀 localStorage（離線） */
+      /** 集氣動態：有設定 WISH_LIST_URL 時由伺服器載入；null 表示尚未從 API 寫入過（顯示時改以許願表合成，不用各裝置不同的 localStorage） */
       var supportFeedCache = null;
+
+      /** 有 API 時：未快取則依目前許願列表 + 集氣數合成，避免兩台裝置讀到不同筆數的 localStorage；無 API 才用離線 feed */
+      function getSupportFeedForDisplay(){
+        if(supportFeedCache !== null) return supportFeedCache;
+        if(WISH_LIST_URL){
+          return mergeEventAndWishFeed([], buildSyntheticFeedFromWishList());
+        }
+        return getFeed();
+      }
+      function syncSupportFeedToLocalStorage(){
+        if(!Array.isArray(supportFeedCache)) return;
+        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(supportFeedCache)); } catch(e) {}
+      }
 
       function getCounts(){
         try {
@@ -953,6 +966,7 @@
           var syn = buildSyntheticFeedFromWishList();
           var merged = mergeEventAndWishFeed(feed, syn);
           supportFeedCache = mergeLatest ? mergePendingSupportFeed(merged, mergeLatest) : merged;
+          syncSupportFeedToLocalStorage();
         };
         return fetch(url, { cache: "no-store" })
           .then(function(res){
@@ -972,28 +986,37 @@
           })
           .catch(function(){
             var pendingMerge = mergeLatest;
-            window.__wishPoolFeedCallback = function(data){
-              var feed = parseSupportFeedPayload(data);
-              var raw = feed !== null ? feed : [];
-              var syn = buildSyntheticFeedFromWishList();
-              var merged = mergeEventAndWishFeed(raw.length ? raw : getFeed(), syn);
-              supportFeedCache = pendingMerge ? mergePendingSupportFeed(merged, pendingMerge) : merged;
-              var s = document.getElementById("wishFeedJsonpScript");
-              if(s) s.remove();
-              renderFeed();
-            };
-            var sep2 = url.indexOf("?") >= 0 ? "&" : "?";
-            var script = document.createElement("script");
-            script.id = "wishFeedJsonpScript";
-            script.src = url + sep2 + "callback=__wishPoolFeedCallback&_ts=" + Date.now();
-            script.onerror = function(){
-              var loc = getFeed();
-              var syn = buildSyntheticFeedFromWishList();
-              var merged = mergeEventAndWishFeed(loc.length ? loc : [], syn);
-              supportFeedCache = pendingMerge ? mergePendingSupportFeed(merged, pendingMerge) : merged;
-              renderFeed();
-            };
-            document.head.appendChild(script);
+            return new Promise(function(resolve){
+              var finished = false;
+              function done(){
+                if(finished) return;
+                finished = true;
+                resolve();
+              }
+              window.__wishPoolFeedCallback = function(data){
+                var feed = parseSupportFeedPayload(data);
+                var raw = feed !== null ? feed : [];
+                var syn = buildSyntheticFeedFromWishList();
+                var merged = mergeEventAndWishFeed(raw.length ? raw : [], syn);
+                supportFeedCache = pendingMerge ? mergePendingSupportFeed(merged, pendingMerge) : merged;
+                syncSupportFeedToLocalStorage();
+                var s = document.getElementById("wishFeedJsonpScript");
+                if(s) s.remove();
+                done();
+              };
+              var sep2 = url.indexOf("?") >= 0 ? "&" : "?";
+              var script = document.createElement("script");
+              script.id = "wishFeedJsonpScript";
+              script.src = url + sep2 + "callback=__wishPoolFeedCallback&_ts=" + Date.now();
+              script.onerror = function(){
+                var syn = buildSyntheticFeedFromWishList();
+                var merged = mergeEventAndWishFeed([], syn);
+                supportFeedCache = pendingMerge ? mergePendingSupportFeed(merged, pendingMerge) : merged;
+                syncSupportFeedToLocalStorage();
+                done();
+              };
+              document.head.appendChild(script);
+            });
           });
       }
 
@@ -1025,7 +1048,7 @@
       }
 
       function renderFeed(){
-        var feed = (supportFeedCache !== null) ? supportFeedCache : getFeed();
+        var feed = getSupportFeedForDisplay();
         var el = document.getElementById("supportFeed");
         var meta = document.getElementById("feedListMeta");
         var ticker = document.getElementById("feedTicker");
@@ -1043,7 +1066,7 @@
         if(meta) meta.textContent = "共 " + feed.length + " 筆，跑馬燈依序輪播（滑鼠移上可暫停）";
 
         function renderOne(idx){
-          var feedNow = (supportFeedCache !== null) ? supportFeedCache : getFeed();
+          var feedNow = getSupportFeedForDisplay();
           if(!feedNow.length || idx >= feedNow.length) return;
           el.innerHTML = "<li>" + feedLineInnerHtml(feedNow[idx]) + "</li>";
         }
@@ -1054,7 +1077,7 @@
 
         function startTicker(){
           feedTickerTimer = setInterval(function(){
-            var feedNow = (supportFeedCache !== null) ? supportFeedCache : getFeed();
+            var feedNow = getSupportFeedForDisplay();
             if(!feedNow || feedNow.length <= 1){
               if(feedTickerTimer){ clearInterval(feedTickerTimer); feedTickerTimer = null; }
               return;
@@ -1079,7 +1102,7 @@
             if(feedTickerTimer){ clearInterval(feedTickerTimer); feedTickerTimer = null; }
           };
           ticker.onmouseleave = function(){
-            var n = (supportFeedCache !== null) ? supportFeedCache : getFeed();
+            var n = getSupportFeedForDisplay();
             if(n && n.length > 1 && !feedTickerTimer) startTicker();
           };
         }
