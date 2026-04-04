@@ -1266,6 +1266,25 @@
         }
       })();
 
+      /** fetch 逾時中止，避免 GAS／圖片上傳卡住整頁（AbortController 不支援時改 Promise.race） */
+      function wishFetchWithTimeout(url, init, timeoutMs){
+        var ms = timeoutMs || 45000;
+        init = init || {};
+        if(typeof AbortController !== "undefined"){
+          var ac = new AbortController();
+          var tid = setTimeout(function(){ try { ac.abort(); } catch(e) {} }, ms);
+          return fetch(url, Object.assign({}, init, { signal: ac.signal }))
+            .then(function(res){ clearTimeout(tid); return res; })
+            .catch(function(err){ clearTimeout(tid); throw err; });
+        }
+        return Promise.race([
+          fetch(url, init),
+          new Promise(function(_, reject){
+            setTimeout(function(){ reject(new Error("TIMEOUT")); }, ms);
+          })
+        ]);
+      }
+
       function uploadWishImages(){
         // 若未設定 Cloudinary，直接略過圖片上傳（回傳空陣列）
         if(!CLOUDINARY_CLOUD_NAME || !CLOUDINARY_UPLOAD_PRESET){
@@ -1273,6 +1292,7 @@
         }
         var uploadUrl = "https://api.cloudinary.com/v1_1/" + CLOUDINARY_CLOUD_NAME + "/image/upload";
         var maxSize = 5 * 1024 * 1024; // 5MB
+        var uploadTimeoutMs = 35000;
 
         function uploadOne(slot){
           return new Promise(function(resolve){
@@ -1293,10 +1313,10 @@
               formData.append("folder", CLOUDINARY_FOLDER);
             }
 
-            fetch(uploadUrl, {
+            wishFetchWithTimeout(uploadUrl, {
               method: "POST",
               body: formData
-            })
+            }, uploadTimeoutMs)
               .then(function(r){ return r.json().catch(function(){ return {}; }); })
               .then(function(d){
                 // Cloudinary 會回傳 secure_url / url
@@ -1361,9 +1381,11 @@
       }
       function doSubmitWish(payload){
         var btn = document.querySelector("#wishForm .form-submit");
+        var submitTimeoutMs = 55000;
         function onSuccess(data){
           if(data && data.ok === false){
             alert("寫入失敗：" + (data.error || "請稍後再試"));
+            done();
             return;
           }
           alert("許願已送出");
@@ -1375,26 +1397,40 @@
         }
         function done(){ if(btn){ btn.disabled = false; btn.textContent = "送出許願"; } }
 
-        fetch(WISH_SUBMIT_URL, {
+        wishFetchWithTimeout(WISH_SUBMIT_URL, {
           method: "POST",
           headers: { "Content-Type": "text/plain; charset=utf-8" },
           body: JSON.stringify(payload)
-        })
+        }, submitTimeoutMs)
           .then(function(res){ return res.json().catch(function(){ return {}; }).then(function(data){ if(!res.ok) return Promise.reject(new Error(data.error || "送出失敗")); return data; }); })
           .then(function(data){ onSuccess(data); done(); })
           .catch(function(err){
             var formUrl = WISH_SUBMIT_URL + (WISH_SUBMIT_URL.indexOf("?") >= 0 ? "&" : "?") + "source=form";
             var iframe = document.getElementById("wishSubmitFrame");
             if(!iframe){ iframe = document.createElement("iframe"); iframe.id = "wishSubmitFrame"; iframe.name = "wishSubmitFrame"; iframe.style.cssText = "position:absolute;width:0;height:0;border:0;"; document.body.appendChild(iframe); }
+            var settled = false;
+            function finishIframe(){
+              if(settled) return;
+              settled = true;
+              window.removeEventListener("message", msgHandler);
+              done();
+            }
             var msgHandler = function(ev){
               if(ev.data && (ev.data.ok === true || ev.data.ok === false)){
+                if(settled) return;
+                settled = true;
                 window.removeEventListener("message", msgHandler);
                 if(ev.data.ok) onSuccess(ev.data); else alert("寫入失敗：" + (ev.data.error || "請稍後再試"));
                 done();
               }
             };
             window.addEventListener("message", msgHandler);
-            setTimeout(function(){ window.removeEventListener("message", msgHandler); done(); }, 15000);
+            var iframeWaitMs = 25000;
+            setTimeout(function(){
+              if(settled) return;
+              finishIframe();
+              alert("尚未收到伺服器回應（網路較慢或瀏覽器阻擋）。請重新整理頁面確認是否已出現新許願；若重複再刪即可。");
+            }, iframeWaitMs);
             var f = document.createElement("form");
             f.method = "POST";
             f.action = formUrl;
