@@ -47,6 +47,30 @@
     .btn-ghost{ background: var(--card); color: var(--muted); border: 1px solid var(--line); }
     .btn-ghost:hover{ color: var(--text); border-color: var(--muted); }
 
+    .wish-category-bar-wrap{
+      margin-bottom: 20px;
+    }
+    .wish-category-bar-wrap .wish-category-label{
+      font-size: 13px; font-weight: 900; color: var(--muted); margin: 0 0 10px; letter-spacing: .02em;
+    }
+    .wish-category-bar{
+      display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center;
+    }
+    .wish-cat-btn{
+      padding: 8px 14px; border-radius: 999px; border: 2px solid var(--line);
+      background: var(--card); color: var(--text); font-size: 13px; font-weight: 800;
+      cursor: pointer; transition: border-color .2s, background .2s, color .2s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .wish-cat-btn:hover{ border-color: var(--wish-border); background: var(--wish-light); color: var(--wish); }
+    .wish-cat-btn.active{
+      border-color: var(--wish); background: var(--wish); color: #fff;
+    }
+    .wish-cat-btn.active:hover{ filter: brightness(1.05); color: #fff; }
+    .wish-grid-filter-empty{
+      grid-column: 1 / -1; text-align: center; color: var(--muted);
+      padding: 36px 16px; font-size: 15px; font-weight: 800;
+    }
     .grid{ display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; }
     .wish-pagination{
       display: flex; align-items: center; justify-content: center; gap: 12px;
@@ -104,6 +128,12 @@
         width: 48px; height: 48px; min-width: 48px; font-size: 16px;
       }
       .wish-pagination .arrow-btn{ font-size: 20px; }
+      .wish-category-bar{
+        flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch;
+        padding-bottom: 4px; margin: 0 -4px; padding-left: 4px; padding-right: 4px;
+        scrollbar-width: thin;
+      }
+      .wish-cat-btn{ flex-shrink: 0; padding: 10px 16px; font-size: 12px; }
     }
     .wish-card{
       background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
@@ -204,8 +234,19 @@
     }
     .upload-box.has-img .remove-img{ display: flex; align-items: center; justify-content: center; }
     .upload-box.has-img .upload-label{ display: none; }
+    .form-notice{
+      margin: 8px 0 14px;
+      padding: 10px 12px;
+      border-radius: var(--radius-sm);
+      background: #fffbeb;
+      border: 1px solid #fde68a;
+      font-size: 13px;
+      font-weight: 800;
+      color: #92400e;
+      line-height: 1.5;
+    }
     .form-submit{
-      width: 100%; margin-top: 24px; padding: 14px; border-radius: var(--radius-sm); border: none;
+      width: 100%; margin-top: 0; padding: 14px; border-radius: var(--radius-sm); border: none;
       background: var(--wish); color: #fff; font-size: 16px; font-weight: 900; cursor: pointer;
       transition: filter .2s, transform .1s;
     }
@@ -337,6 +378,10 @@
     </header>
 
     <p id="wishListLoadHint" class="wish-list-hint" style="display:none; margin-bottom:12px; padding:10px 14px; background:#fef3c7; border:1px solid #f59e0b; border-radius:12px; font-size:13px; color:#92400e; font-weight:800;">無法從伺服器載入許願列表。若已設定 API 網址，請確認試算表第一列為標題、並已部署為「任何人」存取。</p>
+    <nav class="wish-category-bar-wrap" id="wishCategoryBarWrap" style="display:none;" aria-label="依商品分類篩選">
+      <p class="wish-category-label">商品分類（點選只顯示該類許願卡）</p>
+      <div class="wish-category-bar" id="wishCategoryBar" role="tablist"></div>
+    </nav>
     <div class="grid" id="wishGrid">
       <p class="wish-grid-empty" style="grid-column:1/-1; text-align:center; color:var(--muted); padding:40px 16px; font-size:15px; font-weight:800;">尚無許願，點擊上方「＋ 發起許願」新增</p>
     </div>
@@ -393,6 +438,7 @@
               <option>雜貨</option>
             </select>
           </div>
+          <p class="form-notice" role="note">許願商品送出後無法刪除，如需刪除請洽闆闆刪除即可。</p>
           <button type="submit" class="form-submit">送出許願</button>
         </form>
       </div>
@@ -491,6 +537,10 @@
       var wishListCache = [];
       var currentWishPage = 1;
       var wishTotalPages = 1;
+      /** 與表單「商品類別」選項一致；「全部」不寫在此陣列 */
+      var WISH_CATEGORY_OPTIONS = ["其他", "角色周邊", "服飾", "食品", "雜貨"];
+      /** 目前篩選類別，空字串 = 顯示全部 */
+      var currentWishCategory = "";
       /** 集氣動態：有設定 WISH_LIST_URL 時由伺服器載入；null 表示尚未從 API 寫入過（顯示時改以許願表合成，不用各裝置不同的 localStorage） */
       var supportFeedCache = null;
       /** 最近一次集氣 API 回傳「集氣動態分頁未寫入」時顯示於跑馬燈下方（成功同步後清除） */
@@ -575,6 +625,66 @@
         if(w == null) return "";
         return String(w.id != null ? w.id : "").trim();
       }
+      /** 集氣紀錄用指紋（同 id 不同商品時可區分）；勿只用 id，否則試算表重複編號會讓新卡顯示已集氣 */
+      function wishVoteFingerprintSource(w){
+        if(!w) return "";
+        return String((w.title || "").trim().toLowerCase()) + "\u0001" +
+          String((w.link || "").trim().toLowerCase().replace(/\/+$/, "")) + "\u0001" +
+          String(w.createdAt != null ? w.createdAt : "");
+      }
+      function voteKeyHash(s){
+        var h = 5381;
+        for(var i = 0; i < s.length; i++){
+          h = ((h << 5) + h) + s.charCodeAt(i);
+          h = h | 0;
+        }
+        return (h >>> 0).toString(36);
+      }
+      function wishVoteStorageKey(w){
+        if(!w) return "";
+        var id = wishIdStr(w);
+        var tag = voteKeyHash(wishVoteFingerprintSource(w));
+        if(id) return "wish_voted_" + id + "_" + tag;
+        return "wish_voted_noid_" + tag;
+      }
+      function countWishesWithSameId(id){
+        var t = String(id || "").trim();
+        if(!t) return 0;
+        var list = wishListCache || [];
+        var n = 0;
+        for(var i = 0; i < list.length; i++){
+          if(wishIdStr(list[i]) === t) n++;
+        }
+        return n;
+      }
+      function readWishVoteFromStorage(w){
+        if(!w) return false;
+        try {
+          if(localStorage.getItem(wishVoteStorageKey(w))) return true;
+          var id = wishIdStr(w);
+          if(id && countWishesWithSameId(id) <= 1 && localStorage.getItem("wish_voted_" + id)) return true;
+        } catch(e) {}
+        return false;
+      }
+      function writeWishVoteToStorage(w){
+        if(!w) return;
+        try {
+          localStorage.setItem(wishVoteStorageKey(w), "1");
+          var id = wishIdStr(w);
+          if(id && countWishesWithSameId(id) <= 1) localStorage.setItem("wish_voted_" + id, "1");
+        } catch(e) {}
+      }
+      function resolveWishFromCard(card){
+        if(!card) return null;
+        var idx = card.getAttribute("data-list-idx");
+        if(idx != null && idx !== ""){
+          var ix = parseInt(idx, 10);
+          if(!isNaN(ix) && ix >= 0 && ix < wishListCache.length) return wishListCache[ix];
+        }
+        var id = (card.getAttribute("data-id") || "").trim();
+        if(!id) return null;
+        return wishListCache.filter(function(x){ return wishIdStr(x) === id; })[0] || null;
+      }
       /** 同商品只顯示一張卡：依連結／標題分組，每組只留第一筆並設 _groupSize = 該組人數 */
       function groupAndSortWishList(list){
         var groups = {};
@@ -604,7 +714,8 @@
         var count = parseInt(w.supportCount, 10) || 0;
         var imgUrl = (w.image1 != null && String(w.image1).trim() !== "") ? String(w.image1).trim() : "";
         var imgHtml = imgUrl ? "<img src=\"" + escapeHtml(imgUrl) + "\" alt=\"\" referrerpolicy=\"no-referrer\" loading=\"lazy\" onerror=\"this.style.display=\\'none\\'; this.parentElement.innerHTML=\\'🫘\\';\" />" : "🫘";
-        return "<div class=\"wish-card\" data-id=\"" + escapeHtml(id) + "\"" + idxAttr + ">" +
+        var voteKeyAttr = " data-vote-key=\"" + escapeHtml(wishVoteStorageKey(w)) + "\"";
+        return "<div class=\"wish-card\" data-id=\"" + escapeHtml(id) + "\"" + idxAttr + voteKeyAttr + ">" +
           "<div class=\"img-wrap\">" + imgHtml + "</div>" +
           "<div class=\"body\">" +
           "<h3 class=\"title\">" + title + "</h3>" +
@@ -623,15 +734,19 @@
             e.preventDefault();
             if(this.disabled) return;
             var card = this.closest(".wish-card");
-            var wishId = (card.getAttribute("data-id") || "").trim();
+            var w = resolveWishFromCard(card);
+            var wishId = w ? wishIdStr(w) : (card.getAttribute("data-id") || "").trim();
             if(!wishId){
               alert("此許願缺少編號，無法集氣。請請闆闆檢查試算表 id 欄是否重複或空白，並重新部署後端。");
               return;
             }
+            if(!w){
+              alert("無法對應此卡片資料，請重新整理頁面後再試。");
+              return;
+            }
             var title = card.querySelector(".title");
             var titleText = title ? title.textContent.trim() : "許願";
-            var votedKey = "wish_voted_" + wishId;
-            if(localStorage.getItem(votedKey)){
+            if(readWishVoteFromStorage(w)){
               this.classList.remove("active");
               this.classList.add("done");
               this.textContent = "❤️ 你已經集氣過囉!";
@@ -640,21 +755,24 @@
             }
             if(!canOpenSupportModal(wishId)) return;
             openNickModal(wishId, titleText, function(){
-              try { localStorage.setItem(votedKey, "1"); } catch(e) {}
-            });
+              writeWishVoteToStorage(w);
+            }, w);
           });
         });
       }
       function applyCountsToCards(){
         var counts = getCounts();
         document.querySelectorAll(".wish-card").forEach(function(card){
-          var id = (card.getAttribute("data-id") || "").trim();
+          var w = resolveWishFromCard(card);
+          var id = w ? wishIdStr(w) : (card.getAttribute("data-id") || "").trim();
           if(!id) return;
           var n = counts[id] != null ? counts[id] : 0;
           updateCardCountOnly(id, n);
           var cta = card.querySelector(".cta");
           if(cta){
-            var voted = localStorage.getItem("wish_voted_" + id);
+            var vkCard = card.getAttribute("data-vote-key");
+            var voted = w ? readWishVoteFromStorage(w) : !!(vkCard && localStorage.getItem(vkCard));
+            if(!voted && !w && id) voted = !!localStorage.getItem("wish_voted_" + id);
             if(voted){
               cta.classList.remove("active");
               cta.classList.add("done");
@@ -669,11 +787,80 @@
           }
         });
       }
-      function renderWishPage(page){
-        var list = wishListCache;
+      function normalizeWishCategoryValue(w){
+        return String(w && w.category != null ? w.category : "").trim() || "其他";
+      }
+      function wishListIndexOf(w){
+        for(var i = 0; i < wishListCache.length; i++){
+          if(wishListCache[i] === w) return i;
+        }
+        return -1;
+      }
+      function getFilteredWishList(){
+        if(!currentWishCategory) return wishListCache.slice();
+        return wishListCache.filter(function(x){
+          return normalizeWishCategoryValue(x) === currentWishCategory;
+        });
+      }
+      function buildWishCategoryBar(){
+        var bar = document.getElementById("wishCategoryBar");
+        if(!bar || bar.getAttribute("data-built") === "1") return;
+        var html = "<button type=\"button\" class=\"wish-cat-btn active\" role=\"tab\" aria-selected=\"true\" data-cat=\"\">全部</button>";
+        var ci;
+        for(ci = 0; ci < WISH_CATEGORY_OPTIONS.length; ci++){
+          var c = WISH_CATEGORY_OPTIONS[ci];
+          html += "<button type=\"button\" class=\"wish-cat-btn\" role=\"tab\" aria-selected=\"false\" data-cat=\"" + escapeHtml(c) + "\">" + escapeHtml(c) + "</button>";
+        }
+        bar.innerHTML = html;
+        bar.setAttribute("data-built", "1");
+      }
+      function updateCategoryBarActive(){
+        var bar = document.getElementById("wishCategoryBar");
+        if(!bar) return;
+        bar.querySelectorAll(".wish-cat-btn").forEach(function(btn){
+          var raw = btn.getAttribute("data-cat");
+          var cat = raw != null ? raw : "";
+          var on = (currentWishCategory === "" && cat === "") || (currentWishCategory !== "" && cat === currentWishCategory);
+          btn.classList.toggle("active", on);
+          btn.setAttribute("aria-selected", on ? "true" : "false");
+        });
+      }
+      function refreshWishGridFromCache(){
         var grid = document.getElementById("wishGrid");
         var paginationEl = document.getElementById("wishPagination");
-        if(!grid || list.length === 0) return;
+        if(!grid || wishListCache.length === 0) return;
+        var filtered = getFilteredWishList();
+        if(filtered.length === 0){
+          grid.innerHTML = "<p class=\"wish-grid-filter-empty\">此分類尚無許願商品，請點「全部」或其他分類。</p>";
+          if(paginationEl){ paginationEl.style.display = "none"; paginationEl.innerHTML = ""; }
+          return;
+        }
+        if(filtered.length <= PAGE_SIZE){
+          grid.innerHTML = filtered.map(function(w){
+            var gix = wishListIndexOf(w);
+            return renderWishCard(w, gix >= 0 ? gix : 0);
+          }).join("");
+          if(paginationEl){ paginationEl.style.display = "none"; paginationEl.innerHTML = ""; }
+          bindWishCardButtons();
+          bindWishCardDetailClick();
+          applyCountsToCards();
+        } else {
+          var tp = Math.ceil(filtered.length / PAGE_SIZE) || 1;
+          if(currentWishPage > tp) currentWishPage = tp;
+          if(currentWishPage < 1) currentWishPage = 1;
+          renderWishPage(currentWishPage);
+        }
+      }
+      function renderWishPage(page){
+        var list = getFilteredWishList();
+        var grid = document.getElementById("wishGrid");
+        var paginationEl = document.getElementById("wishPagination");
+        if(!grid || wishListCache.length === 0) return;
+        if(list.length === 0){
+          grid.innerHTML = "<p class=\"wish-grid-filter-empty\">此分類尚無許願商品，請點「全部」或其他分類。</p>";
+          if(paginationEl){ paginationEl.style.display = "none"; paginationEl.innerHTML = ""; }
+          return;
+        }
         currentWishPage = page;
         var totalPages = Math.ceil(list.length / PAGE_SIZE) || 1;
         if(page < 1) page = 1;
@@ -683,7 +870,10 @@
         var start = (page - 1) * PAGE_SIZE;
         var end = Math.min(start + PAGE_SIZE, list.length);
         var pageList = list.slice(start, end);
-        grid.innerHTML = pageList.map(function(w, i){ return renderWishCard(w, start + i); }).join("");
+        grid.innerHTML = pageList.map(function(w){
+          var gix = wishListIndexOf(w);
+          return renderWishCard(w, gix >= 0 ? gix : 0);
+        }).join("");
         bindWishCardButtons();
         bindWishCardDetailClick();
         applyCountsToCards();
@@ -709,7 +899,18 @@
       function applyWishList(data){
         var list = (data && data.wishes) ? data.wishes : [];
         var grid = document.getElementById("wishGrid");
-        if(!grid || list.length === 0) return;
+        if(!grid) return;
+        if(list.length === 0){
+          wishListCache = [];
+          var wrapEmpty = document.getElementById("wishCategoryBarWrap");
+          if(wrapEmpty) wrapEmpty.style.display = "none";
+          var hint0 = document.getElementById("wishListLoadHint");
+          if(hint0) hint0.style.display = "none";
+          setGridEmpty();
+          var pag0 = document.getElementById("wishPagination");
+          if(pag0){ pag0.style.display = "none"; pag0.innerHTML = ""; }
+          return;
+        }
         list = groupAndSortWishList(list);
         wishListCache = list;
         var hint = document.getElementById("wishListLoadHint");
@@ -721,19 +922,15 @@
           counts[id] = parseInt(w.supportCount, 10) || 0;
         });
         saveCounts(counts);
-        if(list.length <= PAGE_SIZE){
-          grid.innerHTML = list.map(function(w, i){ return renderWishCard(w, i); }).join("");
-          var paginationEl = document.getElementById("wishPagination");
-          if(paginationEl){ paginationEl.style.display = "none"; paginationEl.innerHTML = ""; }
-        } else {
-          renderWishPage(1);
-        }
-        bindWishCardButtons();
-        bindWishCardDetailClick();
-        applyCountsToCards();
+        buildWishCategoryBar();
+        var wrap = document.getElementById("wishCategoryBarWrap");
+        if(wrap) wrap.style.display = "block";
+        updateCategoryBarActive();
+        refreshWishGridFromCache();
       }
       /** listIdx：wishListCache 陣列索引；試算表 id 重複時必用，否則 filter 會永遠對到第一筆同 id（標題與詳情不符） */
       function openWishDetail(wishId, listIdx){
+        detailOpenWish = null;
         var w = null;
         if(listIdx != null && listIdx !== ""){
           var ix = parseInt(listIdx, 10);
@@ -747,6 +944,7 @@
         if(!w) return;
         var wid = wishIdStr(w);
         if(!wid) return;
+        detailOpenWish = w;
         var counts = getCounts();
         var count = counts[wid] != null ? counts[wid] : (parseInt(w.supportCount, 10) || 0);
         var titleEl = document.getElementById("detailTitle");
@@ -788,18 +986,28 @@
         if(adminEl){
           adminEl.style.display = isAdmin ? "flex" : "none";
         }
-        var voted = localStorage.getItem("wish_voted_" + wid);
+        var voted = readWishVoteFromStorage(w);
         if(ctaEl){
           ctaEl.setAttribute("data-wish-id", wid);
+          ctaEl.setAttribute("data-vote-key", wishVoteStorageKey(w));
           if(voted){ ctaEl.classList.remove("active"); ctaEl.classList.add("done"); ctaEl.textContent = "❤️ 你已經集氣過囉!"; ctaEl.disabled = true; }
           else{ ctaEl.classList.add("active"); ctaEl.classList.remove("done"); ctaEl.textContent = "❤️ 我也想要 (+1 集氣)"; ctaEl.disabled = false; }
         }
         var modal = document.getElementById("wishDetailModal");
-        if(modal){ modal.style.display = "flex"; modal.setAttribute("data-current-id", wid); }
+        if(modal){
+          modal.style.display = "flex";
+          modal.setAttribute("data-current-id", wid);
+          if(listIdx != null && listIdx !== "") modal.setAttribute("data-current-list-idx", String(listIdx));
+          else modal.removeAttribute("data-current-list-idx");
+        }
       }
       function closeWishDetail(){
+        detailOpenWish = null;
         var modal = document.getElementById("wishDetailModal");
-        if(modal) modal.style.display = "none";
+        if(modal){
+          modal.style.display = "none";
+          modal.removeAttribute("data-current-list-idx");
+        }
       }
       function updateDetailModalIfOpen(wishId){
         var modal = document.getElementById("wishDetailModal");
@@ -855,6 +1063,8 @@
         if(grid) grid.innerHTML = "<p class=\"wish-grid-loading\">載入許願列表中…<br><span style=\"font-size:12px; font-weight:700;\">若較久可能是伺服器啟動中（約 5–10 秒）</span></p>";
       }
       function setGridEmpty(){
+        var wrap = document.getElementById("wishCategoryBarWrap");
+        if(wrap) wrap.style.display = "none";
         var grid = document.getElementById("wishGrid");
         if(grid) grid.innerHTML = "<p class=\"wish-grid-empty\" style=\"grid-column:1/-1; text-align:center; color:var(--muted); padding:40px 16px; font-size:15px; font-weight:800;\">尚無許願，點擊上方「＋ 發起許願」新增</p>";
       }
@@ -1085,6 +1295,17 @@
       }
 
       document.addEventListener("click", function(e){
+        var catBar = document.getElementById("wishCategoryBar");
+        var catBtn = catBar && e.target.closest ? e.target.closest(".wish-cat-btn") : null;
+        if(catBtn && catBar.contains(catBtn)){
+          e.preventDefault();
+          var rawCat = catBtn.getAttribute("data-cat");
+          currentWishCategory = rawCat != null && rawCat !== "" ? rawCat : "";
+          currentWishPage = 1;
+          updateCategoryBarActive();
+          refreshWishGridFromCache();
+          return;
+        }
         var pagination = document.getElementById("wishPagination");
         if(!pagination || !pagination.contains(e.target)) return;
         var pageBtn = e.target.closest(".page-btn");
@@ -1192,6 +1413,7 @@
       var adminCancel = document.getElementById("adminCancel");
       var adminConfirm = document.getElementById("adminConfirm");
       var pendingSupport = null;
+      var detailOpenWish = null;
 
       var formModalClose = document.getElementById("formModalClose");
       if(btnLaunch){
@@ -1251,10 +1473,23 @@
             e.preventDefault();
             var wishId = (this.getAttribute("data-wish-id") || "").trim();
             if(!wishId || this.classList.contains("done") || this.disabled) return;
+            var wRef = detailOpenWish;
+            if(!wRef || wishIdStr(wRef) !== wishId){
+              var curModal = document.getElementById("wishDetailModal");
+              var curIdx = curModal ? curModal.getAttribute("data-current-list-idx") : null;
+              if(curIdx != null && curIdx !== ""){
+                var ix2 = parseInt(curIdx, 10);
+                if(!isNaN(ix2) && ix2 >= 0 && ix2 < wishListCache.length) wRef = wishListCache[ix2];
+              }
+              if(!wRef || wishIdStr(wRef) !== wishId){
+                var curId = curModal ? curModal.getAttribute("data-current-id") : "";
+                if(curId) wRef = wishListCache.filter(function(x){ return wishIdStr(x) === String(curId).trim(); })[0] || null;
+              }
+            }
+            if(!wRef){ alert("無法對應此許願資料，請關閉視窗後再試。"); return; }
             var titleEl = document.getElementById("detailTitle");
             var titleText = titleEl ? titleEl.textContent.trim() : "許願";
-            var votedKey = "wish_voted_" + wishId;
-            if(localStorage.getItem(votedKey)){
+            if(readWishVoteFromStorage(wRef)){
               this.classList.remove("active");
               this.classList.add("done");
               this.textContent = "❤️ 你已經集氣過囉!";
@@ -1263,11 +1498,11 @@
             }
             if(!canOpenSupportModal(wishId)) return;
             openNickModal(wishId, titleText, function(){
-              try { localStorage.setItem(votedKey, "1"); } catch(err) {}
+              writeWishVoteToStorage(wRef);
               var n = getCounts()[wishId];
               if(n != null) updateCardUI(wishId, n);
               updateDetailModalIfOpen(wishId);
-            });
+            }, wRef);
           });
         }
         if(btnReplace){
@@ -1491,7 +1726,7 @@
             setTimeout(function(){
               if(settled) return;
               finishIframe();
-              alert("尚未收到伺服器回應（網路較慢或瀏覽器阻擋）。請重新整理頁面確認是否已出現新許願；若重複再刪即可。");
+              alert("尚未收到伺服器回應（網路較慢或瀏覽器阻擋）。請重新整理頁面確認是否已出現新許願；若重複送出請洽闆闆協助處理。");
             }, iframeWaitMs);
             var f = document.createElement("form");
             f.method = "POST";
@@ -1651,14 +1886,19 @@
             };
           });
       }
-      function doSupport(wishId, title, nick){
+      function doSupport(wishId, title, nick, wishRef){
         var vid = String(wishId != null ? wishId : "").trim();
         if(!vid){
           if(WISH_SUBMIT_URL) return Promise.reject(new Error("此許願缺少編號"));
           return;
         }
         try {
-          if(localStorage.getItem("wish_voted_" + vid)){
+          if(wishRef){
+            if(readWishVoteFromStorage(wishRef)){
+              if(WISH_SUBMIT_URL) return Promise.reject(new Error("您已對此許願集氣過了"));
+              return;
+            }
+          } else if(localStorage.getItem("wish_voted_" + vid)){
             if(WISH_SUBMIT_URL) return Promise.reject(new Error("您已對此許願集氣過了"));
             return;
           }
@@ -1742,9 +1982,9 @@
         if(countEl) countEl.textContent = n;
         if(fillEl) fillEl.style.width = (n / total * 100) + "%";
       }
-      function openNickModal(wishId, title, cb){
+      function openNickModal(wishId, title, cb, wishRef){
         closeWishDetail();
-        pendingSupport = { wishId: wishId, title: title, cb: cb };
+        pendingSupport = { wishId: wishId, title: title, cb: cb, wishRef: wishRef || null };
         if(nickInput) nickInput.value = "";
         if(nickModal) nickModal.classList.add("show");
         setTimeout(function(){ if(nickInput){ nickInput.focus(); } }, 80);
@@ -1758,7 +1998,7 @@
         if(!pendingSupport){ closeNickModal(); return; }
         if(submitNickLocked) return;
         var cb = pendingSupport.cb;
-        var p = doSupport(pendingSupport.wishId, pendingSupport.title, nick || null);
+        var p = doSupport(pendingSupport.wishId, pendingSupport.title, nick || null, pendingSupport.wishRef);
         if(p && typeof p.then === "function"){
           submitNickLocked = true;
           if(modalOk) modalOk.disabled = true;
