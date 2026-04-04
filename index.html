@@ -190,29 +190,20 @@
       background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
       box-shadow: var(--shadow); padding: 20px 20px;
     }
+    /* 集氣動態：一次列出全部紀錄（最新在上），區塊內可捲動 */
     .feed-ticker{
       border: 1px solid var(--line);
       background: #faf8f6;
       border-radius: var(--radius-sm);
-      padding: 10px 12px;
-      overflow: hidden;
-      height: 48px;
-      display: flex;
-      align-items: center;
+      padding: 8px 4px 8px 12px;
+      max-height: min(420px, 60vh);
+      overflow-y: auto;
+      overflow-x: hidden;
+      -webkit-overflow-scrolling: touch;
     }
-    .feed-ticker ul{ list-style: none; width: 100%; }
-    .feed-ticker li{
-      display: flex; align-items: center; gap: 8px;
-      font-size: 14px; font-weight: 800;
-      color: var(--text);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
+    .feed-ticker ul{ list-style: none; width: 100%; margin: 0; padding: 0; }
     .feed-ticker .time{ color: var(--muted); font-size: 12px; flex-shrink: 0; }
     .feed-ticker .who{ color: var(--wish); flex-shrink: 0; }
-    .feed-ticker.fade-out{ opacity: 0; transform: translateY(-6px); transition: opacity .18s, transform .18s; }
-    .feed-ticker.fade-in{ opacity: 1; transform: translateY(0); transition: opacity .18s, transform .18s; }
     .wish-detail-modal .detail-card{
       background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow);
       max-width: 440px; width: 100%; max-height: 90vh; overflow-y: auto;
@@ -369,8 +360,8 @@
     <section class="feed-section">
       <div class="feed-card">
         <h3>❤️ 集氣動態</h3>
-        <p style="font-size:13px; color:var(--muted); margin:-8px 0 12px;">大家對許願的 +1 會顯示在這裡，闆闆與顧客都能看到</p>
-        <div class="feed-ticker fade-in" id="feedTicker" aria-live="polite">
+        <p style="font-size:13px; color:var(--muted); margin:-8px 0 12px;">大家對許願的 +1 會列在下方（最新在上，最多顯示最近 100 筆），闆闆與顧客都能看到</p>
+        <div class="feed-ticker" id="feedTicker" aria-live="polite">
           <ul class="feed-list" id="supportFeed">
             <li style="color:var(--muted);">尚無集氣紀錄，按「我也想要」即可出現在這裡</li>
           </ul>
@@ -484,7 +475,7 @@
           nick: nick || "有人",
           time: Date.now()
         });
-        feed = feed.slice(0, 30);
+        feed = feed.slice(0, 100);
         try { localStorage.setItem(STORAGE_KEY, JSON.stringify(feed)); } catch(e) {}
         renderFeed();
       }
@@ -843,7 +834,7 @@
         var merged = serverFeed.slice();
         merged.unshift(pending);
         merged.sort(function(a, b){ return feedItemTime(b) - feedItemTime(a); });
-        return merged.slice(0, 30);
+        return merged.slice(0, 100);
       }
       /** mergeLatest：集氣成功後傳入，避免快取／延遲導致最新一筆消失 */
       function loadSupportFeed(mergeLatest){
@@ -910,48 +901,24 @@
         }
       });
 
-      var feedTickerTimer = null;
-      var feedTickerIdx = 0;
-
       function renderFeed(){
         var feed = (supportFeedCache !== null) ? supportFeedCache : getFeed();
         var el = document.getElementById("supportFeed");
-        var ticker = document.getElementById("feedTicker");
         if(!el) return;
-
-        if(feedTickerTimer){ clearInterval(feedTickerTimer); feedTickerTimer = null; }
-        feedTickerIdx = 0;
 
         if(feed.length === 0){
           el.innerHTML = "<li style='color:var(--muted);'>尚無集氣紀錄，按「我也想要」即可出現在這裡</li>";
           return;
         }
 
-        function renderOne(i){
+        var html = "";
+        for(var i = 0; i < feed.length; i++){
           var x = feed[i];
           var timeStr = formatTime(feedItemTime(x));
           var titleDisp = (x.title != null && String(x.title).trim() !== "") ? String(x.title) : "許願";
-          el.innerHTML = "<li><span class='time'>" + timeStr + "</span> <span class='who'>" + escapeHtml(x.nick || "有人") + "</span> 對 《" + escapeHtml(titleDisp) + "》+1 集氣</li>";
+          html += "<li><span class='time'>" + timeStr + "</span> <span class='who'>" + escapeHtml(x.nick || "有人") + "</span> 對 《" + escapeHtml(titleDisp) + "》+1 集氣</li>";
         }
-
-        renderOne(feedTickerIdx);
-
-        if(ticker){
-          ticker.addEventListener("mouseenter", function(){ if(feedTickerTimer){ clearInterval(feedTickerTimer); feedTickerTimer = null; } });
-          ticker.addEventListener("mouseleave", function(){ if(!feedTickerTimer) startTicker(); });
-        }
-
-        function startTicker(){
-          feedTickerTimer = setInterval(function(){
-            if(ticker){ ticker.classList.remove("fade-in"); ticker.classList.add("fade-out"); }
-            setTimeout(function(){
-              feedTickerIdx = (feedTickerIdx + 1) % feed.length;
-              renderOne(feedTickerIdx);
-              if(ticker){ ticker.classList.remove("fade-out"); ticker.classList.add("fade-in"); }
-            }, 180);
-          }, 2600);
-        }
-        startTicker();
+        el.innerHTML = html;
       }
 
       var formModal = document.getElementById("formModal");
@@ -1392,13 +1359,13 @@
             if(WISH_LIST_URL){
               if(!Array.isArray(supportFeedCache)) supportFeedCache = [];
               supportFeedCache.unshift(optimistic);
-              supportFeedCache = supportFeedCache.slice(0, 30);
+              supportFeedCache = supportFeedCache.slice(0, 100);
               renderFeed();
             }
             try{
               var loc = getFeed();
               loc.unshift(optimistic);
-              localStorage.setItem(STORAGE_KEY, JSON.stringify(loc.slice(0, 30)));
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(loc.slice(0, 100)));
             }catch(e){}
             return loadSupportFeed(optimistic).then(renderFeed);
           });

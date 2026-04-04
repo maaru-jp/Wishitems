@@ -47,7 +47,7 @@ function doGet(e) {
 }
 
 /**
- * 讀取第二張分頁「集氣動態」：欄位 time, wishId, title, nick；回傳最新 30 筆（新→舊）
+ * 讀取第二張分頁「集氣動態」：欄位 time, wishId, title, nick；回傳最新 100 筆（新→舊）
  */
 function _getSupportFeed(callback) {
   var rows = [];
@@ -91,8 +91,8 @@ function _getSupportFeed(callback) {
     rows.sort(function (a, b) {
       return b.time - a.time;
     });
-    if (rows.length > 30) {
-      rows = rows.slice(0, 30);
+    if (rows.length > 100) {
+      rows = rows.slice(0, 100);
     }
   } catch (err) {
     rows = [];
