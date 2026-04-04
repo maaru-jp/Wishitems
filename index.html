@@ -818,24 +818,38 @@
           .then(function(){ return loadSupportFeed(); });
       }
 
+      function parseSupportFeedPayload(data){
+        if(!data) return null;
+        if(data.feed && Array.isArray(data.feed)) return data.feed;
+        return null;
+      }
       function loadSupportFeed(){
         if(!WISH_LIST_URL){
           supportFeedCache = null;
           return Promise.resolve();
         }
         var sep = WISH_LIST_URL.indexOf("?") >= 0 ? "&" : "?";
-        var url = WISH_LIST_URL + sep + "type=supportFeed";
+        var url = WISH_LIST_URL + sep + "type=supportFeed&feed=1";
         return fetch(url)
           .then(function(res){
             if(!res.ok) return Promise.reject(new Error("feed"));
             return res.json().catch(function(){ return null; });
           })
           .then(function(data){
-            supportFeedCache = (data && data.feed) ? data.feed : [];
+            var feed = parseSupportFeedPayload(data);
+            if(feed !== null){
+              supportFeedCache = feed;
+              return;
+            }
+            if(data && data.wishes && !data.feed){
+              return Promise.reject(new Error("wrong_json"));
+            }
+            supportFeedCache = [];
           })
           .catch(function(){
             window.__wishPoolFeedCallback = function(data){
-              supportFeedCache = (data && data.feed) ? data.feed : [];
+              var feed = parseSupportFeedPayload(data);
+              supportFeedCache = feed !== null ? feed : getFeed();
               var s = document.getElementById("wishFeedJsonpScript");
               if(s) s.remove();
               renderFeed();
@@ -1337,6 +1351,24 @@
             counts[wishId] = n;
             saveCounts(counts);
             updateCardUI(wishId, n);
+            var nickDisp = (nick && String(nick).trim()) ? String(nick).trim() : "有人";
+            var titleDisp = (title && String(title).trim()) ? String(title).trim() : "許願";
+            if(WISH_LIST_URL){
+              if(!Array.isArray(supportFeedCache)) supportFeedCache = [];
+              supportFeedCache.unshift({
+                time: Date.now(),
+                wishId: String(wishId),
+                title: titleDisp,
+                nick: nickDisp
+              });
+              supportFeedCache = supportFeedCache.slice(0, 30);
+              renderFeed();
+            }
+            try{
+              var loc = getFeed();
+              loc.unshift({ time: Date.now(), wishId: String(wishId), title: titleDisp, nick: nickDisp });
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(loc.slice(0, 30)));
+            }catch(e){}
             return loadSupportFeed().then(renderFeed);
           });
         }

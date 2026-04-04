@@ -13,11 +13,14 @@ function doGet(e) {
   var params = e && e.parameter ? e.parameter : {};
   var callback = params.callback || null;
 
-  if (params.type === "supportFeed") {
+  // type=supportFeed 或 feed=1（備用，避免舊快取／參數遺失）
+  if (params.type === "supportFeed" || params.feed === "1") {
     return _getSupportFeed(callback);
   }
 
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  // 許願列表一律讀「第一個分頁」，避免編輯器目前選在「集氣動態」時讀錯表
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheets()[0];
   var data = [];
   try {
     data = sheet.getDataRange().getValues();
@@ -146,7 +149,8 @@ function doPost(e) {
       if (!wishId) {
         return _postResponse({ ok: false, error: "缺少許願編號" }, returnHtml);
       }
-      var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+      var ss = SpreadsheetApp.getActiveSpreadsheet();
+      var sheet = ss.getSheets()[0];
       var data = sheet.getDataRange().getValues();
       if (!data || data.length < 2) {
         return _postResponse({ ok: false, error: "找不到許願資料" }, returnHtml);
@@ -171,7 +175,7 @@ function doPost(e) {
       var newCount = current + 1;
       sheet.getRange(targetRow, supportCountIdx + 1).setValue(newCount);
 
-      var feedSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("集氣動態");
+      var feedSheet = ss.getSheetByName("集氣動態");
       if (feedSheet) {
         var titleSnap = String(json.title || "").trim();
         if (titleSnap.length > 200) {
@@ -197,7 +201,7 @@ function doPost(e) {
   // 管理員：更新單筆許願（狀態 / 圖片）
   if (json.action === "updateWish") {
     try {
-      var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+      var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
       var data = sheet.getDataRange().getValues();
       if (!data || data.length < 2) {
         return _postResponse({ ok: false, error: "目前沒有資料可更新" }, returnHtml);
@@ -245,7 +249,7 @@ function doPost(e) {
   }
 
   try {
-    var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+    var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
     var lastRow = sheet.getLastRow();
     var newId = (lastRow < 1) ? 1 : lastRow;
     var now = Utilities.formatDate(new Date(), "Asia/Taipei", "yyyy-MM-dd HH:mm");
