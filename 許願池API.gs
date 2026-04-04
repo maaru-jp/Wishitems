@@ -27,6 +27,30 @@ function _getSpreadsheet_() {
 }
 
 /**
+ * 新許願編號：取 id 欄位最大值 + 1（勿再用 lastRow，刪列後會與既有 id 重複，導致前台多張卡共用同一編號、集氣鎖錯）
+ */
+function _nextWishId_(sheet) {
+  if (!sheet) return 1;
+  var data = [];
+  try {
+    data = sheet.getDataRange().getValues();
+  } catch (e) {
+    return 1;
+  }
+  if (!data || data.length < 2) return 1;
+  var headers = data[0];
+  var idIdx = headers.indexOf("id");
+  if (idIdx === -1) return Math.max(1, data.length - 1);
+  var maxId = 0;
+  var r;
+  for (r = 1; r < data.length; r++) {
+    var n = parseInt(data[r][idIdx], 10);
+    if (!isNaN(n) && n > maxId) maxId = n;
+  }
+  return maxId + 1;
+}
+
+/**
  * 在編輯器執行一次即可（獨立腳本）：setSpreadsheetId_("1lbAqCBnYuOkzLFyn3DWMdIbZRAm7kyvnOgILQzmMDEY")
  */
 function setSpreadsheetId_(sheetId) {
@@ -414,8 +438,7 @@ function doPost(e) {
 
   try {
     var sheet = _getSpreadsheet_().getSheets()[0];
-    var lastRow = sheet.getLastRow();
-    var newId = (lastRow < 1) ? 1 : lastRow;
+    var newId = _nextWishId_(sheet);
     var now = Utilities.formatDate(new Date(), "Asia/Taipei", "yyyy-MM-dd HH:mm");
 
     var row = [
