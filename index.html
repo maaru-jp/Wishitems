@@ -458,6 +458,8 @@
       var wishListCache = [];
       var currentWishPage = 1;
       var wishTotalPages = 1;
+      /** 集氣動態：有設定 WISH_LIST_URL 時由伺服器載入；null 表示改讀 localStorage（離線） */
+      var supportFeedCache = null;
 
       function getCounts(){
         try {
@@ -485,6 +487,12 @@
         feed = feed.slice(0, 30);
         try { localStorage.setItem(STORAGE_KEY, JSON.stringify(feed)); } catch(e) {}
         renderFeed();
+      }
+      function feedItemTime(x){
+        var t = x && x.time;
+        if(typeof t === "number" && !isNaN(t)) return t;
+        var d = new Date(t);
+        return isNaN(d.getTime()) ? Date.now() : d.getTime();
       }
       function formatTime(t){
         var diff = (Date.now() - t) / 1000;
@@ -806,6 +814,41 @@
           .finally(function(){
             bindWishCardButtons();
             applyCountsToCards();
+          })
+          .then(function(){ return loadSupportFeed(); });
+      }
+
+      function loadSupportFeed(){
+        if(!WISH_LIST_URL){
+          supportFeedCache = null;
+          return Promise.resolve();
+        }
+        var sep = WISH_LIST_URL.indexOf("?") >= 0 ? "&" : "?";
+        var url = WISH_LIST_URL + sep + "type=supportFeed";
+        return fetch(url)
+          .then(function(res){
+            if(!res.ok) return Promise.reject(new Error("feed"));
+            return res.json().catch(function(){ return null; });
+          })
+          .then(function(data){
+            supportFeedCache = (data && data.feed) ? data.feed : [];
+          })
+          .catch(function(){
+            window.__wishPoolFeedCallback = function(data){
+              supportFeedCache = (data && data.feed) ? data.feed : [];
+              var s = document.getElementById("wishFeedJsonpScript");
+              if(s) s.remove();
+              renderFeed();
+            };
+            var sep2 = url.indexOf("?") >= 0 ? "&" : "?";
+            var script = document.createElement("script");
+            script.id = "wishFeedJsonpScript";
+            script.src = url + sep2 + "callback=__wishPoolFeedCallback";
+            script.onerror = function(){
+              supportFeedCache = getFeed();
+              renderFeed();
+            };
+            document.head.appendChild(script);
           });
       }
 
@@ -827,7 +870,7 @@
       var feedTickerIdx = 0;
 
       function renderFeed(){
-        var feed = getFeed();
+        var feed = (supportFeedCache !== null) ? supportFeedCache : getFeed();
         var el = document.getElementById("supportFeed");
         var ticker = document.getElementById("feedTicker");
         if(!el) return;
@@ -842,8 +885,9 @@
 
         function renderOne(i){
           var x = feed[i];
-          var timeStr = formatTime(x.time);
-          el.innerHTML = "<li><span class='time'>" + timeStr + "</span> <span class='who'>" + escapeHtml(x.nick) + "</span> 對 《" + escapeHtml(x.title) + "》+1 集氣</li>";
+          var timeStr = formatTime(feedItemTime(x));
+          var titleDisp = (x.title != null && String(x.title).trim() !== "") ? String(x.title) : "許願";
+          el.innerHTML = "<li><span class='time'>" + timeStr + "</span> <span class='who'>" + escapeHtml(x.nick || "有人") + "</span> 對 《" + escapeHtml(titleDisp) + "》+1 集氣</li>";
         }
 
         renderOne(feedTickerIdx);
@@ -1265,10 +1309,15 @@
         });
       }
 
-      /** 呼叫後端 API：對指定許願 +1 集氣，寫入試算表 supportCount */
-      function apiAddSupport(wishId){
+      /** 呼叫後端 API：對指定許願 +1 集氣，寫入試算表 supportCount 與「集氣動態」分頁 */
+      function apiAddSupport(wishId, title, nick){
         if(!WISH_SUBMIT_URL) return Promise.reject(new Error("尚未設定 API 網址"));
-        var payload = { action: "addSupport", wishId: String(wishId) };
+        var payload = {
+          action: "addSupport",
+          wishId: String(wishId),
+          title: String(title || "").slice(0, 200),
+          nick: String(nick || "有人").slice(0, 40)
+        };
         return fetch(WISH_SUBMIT_URL, {
           method: "POST",
           headers: { "Content-Type": "text/plain; charset=utf-8" },
@@ -1282,13 +1331,13 @@
       }
       function doSupport(wishId, title, nick){
         if(WISH_SUBMIT_URL){
-          return apiAddSupport(wishId).then(function(data){
+          return apiAddSupport(wishId, title, nick || "有人").then(function(data){
             var n = data.supportCount;
             var counts = getCounts();
             counts[wishId] = n;
             saveCounts(counts);
-            addToFeed(wishId, title, nick || "有人");
             updateCardUI(wishId, n);
+            return loadSupportFeed().then(renderFeed);
           });
         }
         var counts = getCounts();
