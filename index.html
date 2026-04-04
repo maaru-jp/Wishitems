@@ -284,7 +284,11 @@
     .wish-detail-modal .detail-cta.active{ background: var(--wish); color: #fff; }
     .wish-detail-modal .detail-cta.done{ background: #f3f4f6; color: var(--muted); cursor: default; }
 
-    .feed-card h3{ font-size: 16px; font-weight: 900; margin: 0 0 14px; display: flex; align-items: center; gap: 8px; }
+    .feed-card h3{ font-size: 16px; font-weight: 900; margin: 0 0 8px; display: flex; align-items: center; gap: 8px; }
+    #feedListMeta.feed-list-meta{
+      font-size: 13px; color: var(--muted); margin: 0 0 12px; font-weight: 800;
+      line-height: 1.5; min-height: 1.5em; display: block; word-break: break-word;
+    }
     .feed-list{ list-style: none; }
     .feed-list li{
       padding: 10px 12px; border-radius: var(--radius-sm); font-size: 14px; font-weight: 800;
@@ -389,7 +393,7 @@
     <section class="feed-section">
       <div class="feed-card">
         <h3>❤️ 集氣動態</h3>
-        <p id="feedListMeta" style="font-size:12px;color:var(--muted);margin:-4px 0 10px;font-weight:800;"></p>
+        <div id="feedListMeta" class="feed-list-meta" aria-live="polite">載入集氣動態中…</div>
         <div class="feed-ticker fade-in" id="feedTicker" aria-live="polite">
           <ul class="feed-list" id="supportFeed">
             <li style="color:var(--muted);">尚無集氣紀錄，按「我也想要」即可出現在這裡</li>
@@ -1058,20 +1062,24 @@
         var el = document.getElementById("supportFeed");
         var meta = document.getElementById("feedListMeta");
         var ticker = document.getElementById("feedTicker");
-        if(!el) return;
 
         if(feedTickerTimer){ clearInterval(feedTickerTimer); feedTickerTimer = null; }
         feedTickerIdx = 0;
 
-        if(feed.length === 0){
-          if(meta) meta.textContent = lastFeedAppendWarning || "";
-          el.innerHTML = "<li style='color:var(--muted);'>尚無集氣紀錄，按「我也想要」即可出現在這裡</li>";
-          return;
+        if(meta){
+          if(feed.length === 0){
+            meta.textContent = lastFeedAppendWarning || "";
+          } else {
+            var base = "共 " + feed.length + " 筆，跑馬燈依序輪播（滑鼠移上可暫停）";
+            meta.textContent = lastFeedAppendWarning ? base + " ⚠ " + lastFeedAppendWarning : base;
+          }
         }
 
-        if(meta){
-          var base = "共 " + feed.length + " 筆，跑馬燈依序輪播（滑鼠移上可暫停）";
-          meta.textContent = lastFeedAppendWarning ? base + "　⚠ " + lastFeedAppendWarning : base;
+        if(!el) return;
+
+        if(feed.length === 0){
+          el.innerHTML = "<li style='color:var(--muted);'>尚無集氣紀錄，按「我也想要」即可出現在這裡</li>";
+          return;
         }
 
         function renderOne(idx){
