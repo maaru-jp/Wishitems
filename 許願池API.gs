@@ -11,7 +11,7 @@
  * 2) 若腳本在 script.google.com 是「獨立專案」，Web App 沒有使用中試算表，必須把 ID 填在下方。
  *    ID：試算表網址 https://docs.google.com/spreadsheets/d/【這串】/edit
  */
-var SPREADSHEET_ID = "";
+var SPREADSHEET_ID = "1lbAqCBnYuOkzLFyn3DWMdIbZRAm7kyvnOgILQzmMDEY";
 
 function _getSpreadsheet_() {
   var id = String(SPREADSHEET_ID || "").replace(/^\s+|\s+$/g, "");
@@ -27,7 +27,7 @@ function _getSpreadsheet_() {
 }
 
 /**
- * 在編輯器執行一次即可（獨立腳本）：setSpreadsheetId_("試算表ID")
+ * 在編輯器執行一次即可（獨立腳本）：setSpreadsheetId_("1lbAqCBnYuOkzLFyn3DWMdIbZRAm7kyvnOgILQzmMDEY")
  */
 function setSpreadsheetId_(sheetId) {
   PropertiesService.getScriptProperties().setProperty("SPREADSHEET_ID", String(sheetId || "").trim());
