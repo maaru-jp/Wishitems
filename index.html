@@ -286,8 +286,8 @@
 
     .feed-card h3{ font-size: 16px; font-weight: 900; margin: 0 0 8px; display: flex; align-items: center; gap: 8px; }
     #feedListMeta.feed-list-meta{
-      font-size: 13px; color: var(--muted); margin: 0 0 12px; font-weight: 800;
-      line-height: 1.5; min-height: 1.5em; display: block; word-break: break-word;
+      font-size: 14px; color: var(--text); margin: 0 0 12px; font-weight: 800;
+      line-height: 1.55; min-height: 1.5em; display: block; word-break: break-word;
     }
     .feed-list{ list-style: none; }
     .feed-list li{
@@ -1070,7 +1070,7 @@
           if(feed.length === 0){
             meta.textContent = lastFeedAppendWarning || "";
           } else {
-            var base = "共 " + feed.length + " 筆，跑馬燈依序輪播（滑鼠移上可暫停）";
+            var base = "共 " + feed.length + " 筆集氣動態 · 闆闆與顧客都會看到";
             meta.textContent = lastFeedAppendWarning ? base + " ⚠ " + lastFeedAppendWarning : base;
           }
         }
