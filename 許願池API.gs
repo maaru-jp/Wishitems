@@ -11,7 +11,7 @@
  * 2) 若腳本在 script.google.com 是「獨立專案」，Web App 沒有使用中試算表，必須把 ID 填在下方。
  *    ID：試算表網址 https://docs.google.com/spreadsheets/d/【這串】/edit
  */
-var SPREADSHEET_ID = "1lbAqCBnYuOkzLFyn3DWMdIbZRAm7kyvnOgILQzmMDEY";
+var SPREADSHEET_ID = "";
 
 function _getSpreadsheet_() {
   var id = String(SPREADSHEET_ID || "").replace(/^\s+|\s+$/g, "");
@@ -27,7 +27,7 @@ function _getSpreadsheet_() {
 }
 
 /**
- * 在編輯器執行一次即可（獨立腳本）：setSpreadsheetId_("1lbAqCBnYuOkzLFyn3DWMdIbZRAm7kyvnOgILQzmMDEY")
+ * 在編輯器執行一次即可（獨立腳本）：setSpreadsheetId_("試算表ID")
  */
 function setSpreadsheetId_(sheetId) {
   PropertiesService.getScriptProperties().setProperty("SPREADSHEET_ID", String(sheetId || "").trim());
@@ -220,8 +220,8 @@ function _getSupportFeed(callback) {
     });
     var wishSummary = _supportFeedFromWishSheet_(ss);
     var merged = _mergeEventFeedAndWishSummary_(eventRows, wishSummary);
-    if (merged.length > 100) {
-      merged = merged.slice(0, 100);
+    if (merged.length > 300) {
+      merged = merged.slice(0, 300);
     }
     return _jsonResponse({ feed: merged }, callback);
   } catch (err) {
@@ -332,7 +332,8 @@ function doPost(e) {
         if (!nickVal) {
           nickVal = "有人";
         }
-        var timeVal = new Date().getTime();
+        // 使用 Date 物件寫入，試算表顯示為日期時間；讀取時 _getSupportFeed 會正確轉成毫秒
+        var timeVal = new Date();
         try {
           feedSheet.appendRow([timeVal, wishId, titleSnap, nickVal]);
           feedAppended = true;

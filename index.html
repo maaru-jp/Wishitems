@@ -481,6 +481,8 @@
       var wishTotalPages = 1;
       /** 集氣動態：有設定 WISH_LIST_URL 時由伺服器載入；null 表示尚未從 API 寫入過（顯示時改以許願表合成，不用各裝置不同的 localStorage） */
       var supportFeedCache = null;
+      /** 最近一次集氣 API 回傳「集氣動態分頁未寫入」時顯示於跑馬燈下方（成功同步後清除） */
+      var lastFeedAppendWarning = "";
 
       /** 有 API 時：未快取則依目前許願列表 + 集氣數合成，避免兩台裝置讀到不同筆數的 localStorage；無 API 才用離線 feed */
       function getSupportFeedForDisplay(){
@@ -673,7 +675,7 @@
         var counts = getCounts();
         list.forEach(function(w){
           var id = String(w.id != null ? w.id : "");
-          if(counts[id] == null) counts[id] = parseInt(w.supportCount, 10) || 0;
+          counts[id] = parseInt(w.supportCount, 10) || 0;
         });
         saveCounts(counts);
         if(list.length <= PAGE_SIZE){
@@ -819,11 +821,13 @@
         }
         return { similar: false };
       }
-      function loadWishList(){
+      function loadWishList(opts){
+        opts = opts || {};
+        var silent = !!opts.silent;
         if(!WISH_LIST_URL) return Promise.resolve();
         var grid = document.getElementById("wishGrid");
         if(!grid) return Promise.resolve();
-        setGridLoading();
+        if(!silent) setGridLoading();
         var listUrl = WISH_LIST_URL;
         function afterListReady(){
           bindWishCardButtons();
@@ -834,14 +838,14 @@
           .then(function(res){ return res.ok ? res.json().catch(function(){ return null; }) : Promise.reject(new Error("無法載入")); })
           .then(function(data){
             if(data && data.wishes && data.wishes.length > 0) applyWishList(data);
-            else setGridEmpty();
+            else if(!silent) setGridEmpty();
             return afterListReady();
           })
           .catch(function(){
             return new Promise(function(resolve){
               window.__wishPoolListCallback = function(data){
                 if(data && data.wishes && data.wishes.length > 0) applyWishList(data);
-                else setGridEmpty();
+                else if(!silent) setGridEmpty();
                 var s = document.getElementById("wishListJsonpScript");
                 if(s) s.remove();
                 afterListReady().then(resolve);
@@ -851,8 +855,8 @@
               script.id = "wishListJsonpScript";
               script.src = listUrl + sep + "callback=__wishPoolListCallback";
               script.onerror = function(){
-                showListLoadError();
-                setGridEmpty();
+                if(!silent) showListLoadError();
+                if(!silent) setGridEmpty();
                 afterListReady().then(resolve);
               };
               document.head.appendChild(script);
@@ -867,12 +871,12 @@
         if(supportFeedPollTimer != null) return;
         supportFeedPollTimer = setInterval(function(){
           if(document.hidden) return;
-          loadSupportFeed().then(function(){ renderFeed(); });
+          loadWishList({ silent: true });
         }, 35000);
       }
       document.addEventListener("visibilitychange", function(){
         if(document.hidden || !WISH_LIST_URL) return;
-        loadSupportFeed().then(function(){ renderFeed(); });
+        loadWishList({ silent: true });
       });
 
       function parseSupportFeedPayload(data){
@@ -907,12 +911,13 @@
         var out = [];
         var counts = getCounts();
         var list = wishListCache || [];
+        var useServerCountsOnly = !!WISH_LIST_URL;
         for(var i = 0; i < list.length; i++){
           var w = list[i];
           var id = String(w.id != null ? w.id : "");
           var nServer = parseInt(w.supportCount, 10) || 0;
           var nLocal = counts[id] != null ? counts[id] : 0;
-          var n = Math.max(nServer, nLocal);
+          var n = useServerCountsOnly ? nServer : Math.max(nServer, nLocal);
           if(n <= 0) continue;
           var t = Date.now();
           if(w.createdAt){
@@ -962,6 +967,7 @@
         var sep = WISH_LIST_URL.indexOf("?") >= 0 ? "&" : "?";
         var url = WISH_LIST_URL + sep + "type=supportFeed&feed=1&_ts=" + Date.now();
         var applyMerged = function(rawFeed){
+          lastFeedAppendWarning = "";
           var feed = rawFeed != null ? rawFeed : [];
           var syn = buildSyntheticFeedFromWishList();
           var merged = mergeEventAndWishFeed(feed, syn);
@@ -1058,12 +1064,15 @@
         feedTickerIdx = 0;
 
         if(feed.length === 0){
-          if(meta) meta.textContent = "";
+          if(meta) meta.textContent = lastFeedAppendWarning || "";
           el.innerHTML = "<li style='color:var(--muted);'>尚無集氣紀錄，按「我也想要」即可出現在這裡</li>";
           return;
         }
 
-        if(meta) meta.textContent = "共 " + feed.length + " 筆，跑馬燈依序輪播（滑鼠移上可暫停）";
+        if(meta){
+          var base = "共 " + feed.length + " 筆，跑馬燈依序輪播（滑鼠移上可暫停）";
+          meta.textContent = lastFeedAppendWarning ? base + "　⚠ " + lastFeedAppendWarning : base;
+        }
 
         function renderOne(idx){
           var feedNow = getSupportFeedForDisplay();
@@ -1531,7 +1540,8 @@
             return {
               ok: true,
               supportCount: typeof data.supportCount === "number" ? data.supportCount : (parseInt(data.supportCount, 10) || 0),
-              feedAppended: data.feedAppended
+              feedAppended: data.feedAppended,
+              feedAppendError: data.feedAppendError
             };
           });
       }
@@ -1539,9 +1549,20 @@
         if(WISH_SUBMIT_URL){
           return apiAddSupport(wishId, title, nick || "有人").then(function(data){
             var n = data.supportCount;
+            if(data.feedAppended === false){
+              lastFeedAppendWarning = data.feedAppendError
+                ? String(data.feedAppendError)
+                : "「集氣動態」分頁未寫入試算表。若為獨立 Apps Script 專案，請在 許願池API.gs 設定 SPREADSHEET_ID 並重新部署。";
+            }
             var counts = getCounts();
             counts[wishId] = n;
             saveCounts(counts);
+            for(var wi = 0; wi < wishListCache.length; wi++){
+              if(String(wishListCache[wi].id != null ? wishListCache[wi].id : "") === String(wishId)){
+                wishListCache[wi].supportCount = n;
+                break;
+              }
+            }
             updateCardUI(wishId, n);
             var nickDisp = (nick && String(nick).trim()) ? String(nick).trim() : "有人";
             var titleDisp = (title && String(title).trim()) ? String(title).trim() : "許願";
