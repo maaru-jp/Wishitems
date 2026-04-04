@@ -823,14 +823,41 @@
         if(data.feed && Array.isArray(data.feed)) return data.feed;
         return null;
       }
-      function loadSupportFeed(){
+      /** 伺服器回傳若比 POST 慢半拍，GET 可能仍是舊的；合併剛集氣的那一筆避免被蓋掉 */
+      function mergePendingSupportFeed(serverFeed, pending){
+        if(!pending || !serverFeed) return serverFeed || [];
+        var has = false;
+        var pw = String(pending.wishId);
+        var pn = String(pending.nick || "有人");
+        var pt = feedItemTime(pending);
+        for(var i = 0; i < serverFeed.length; i++){
+          var x = serverFeed[i];
+          if(String(x.wishId) !== pw) continue;
+          if(String(x.nick || "有人") !== pn) continue;
+          if(Math.abs(feedItemTime(x) - pt) < 180000){
+            has = true;
+            break;
+          }
+        }
+        if(has) return serverFeed.slice();
+        var merged = serverFeed.slice();
+        merged.unshift(pending);
+        merged.sort(function(a, b){ return feedItemTime(b) - feedItemTime(a); });
+        return merged.slice(0, 30);
+      }
+      /** mergeLatest：集氣成功後傳入，避免快取／延遲導致最新一筆消失 */
+      function loadSupportFeed(mergeLatest){
         if(!WISH_LIST_URL){
           supportFeedCache = null;
           return Promise.resolve();
         }
         var sep = WISH_LIST_URL.indexOf("?") >= 0 ? "&" : "?";
-        var url = WISH_LIST_URL + sep + "type=supportFeed&feed=1";
-        return fetch(url)
+        var url = WISH_LIST_URL + sep + "type=supportFeed&feed=1&_ts=" + Date.now();
+        var applyMerged = function(rawFeed){
+          var feed = rawFeed != null ? rawFeed : [];
+          supportFeedCache = mergeLatest ? mergePendingSupportFeed(feed, mergeLatest) : feed;
+        };
+        return fetch(url, { cache: "no-store" })
           .then(function(res){
             if(!res.ok) return Promise.reject(new Error("feed"));
             return res.json().catch(function(){ return null; });
@@ -838,18 +865,20 @@
           .then(function(data){
             var feed = parseSupportFeedPayload(data);
             if(feed !== null){
-              supportFeedCache = feed;
+              applyMerged(feed);
               return;
             }
             if(data && data.wishes && !data.feed){
               return Promise.reject(new Error("wrong_json"));
             }
-            supportFeedCache = [];
+            applyMerged([]);
           })
           .catch(function(){
+            var pendingMerge = mergeLatest;
             window.__wishPoolFeedCallback = function(data){
               var feed = parseSupportFeedPayload(data);
-              supportFeedCache = feed !== null ? feed : getFeed();
+              var raw = feed !== null ? feed : getFeed();
+              supportFeedCache = pendingMerge ? mergePendingSupportFeed(raw, pendingMerge) : raw;
               var s = document.getElementById("wishFeedJsonpScript");
               if(s) s.remove();
               renderFeed();
@@ -857,9 +886,10 @@
             var sep2 = url.indexOf("?") >= 0 ? "&" : "?";
             var script = document.createElement("script");
             script.id = "wishFeedJsonpScript";
-            script.src = url + sep2 + "callback=__wishPoolFeedCallback";
+            script.src = url + sep2 + "callback=__wishPoolFeedCallback&_ts=" + Date.now();
             script.onerror = function(){
-              supportFeedCache = getFeed();
+              var raw = getFeed();
+              supportFeedCache = pendingMerge ? mergePendingSupportFeed(raw, pendingMerge) : raw;
               renderFeed();
             };
             document.head.appendChild(script);
@@ -1353,23 +1383,24 @@
             updateCardUI(wishId, n);
             var nickDisp = (nick && String(nick).trim()) ? String(nick).trim() : "有人";
             var titleDisp = (title && String(title).trim()) ? String(title).trim() : "許願";
+            var optimistic = {
+              time: Date.now(),
+              wishId: String(wishId),
+              title: titleDisp,
+              nick: nickDisp
+            };
             if(WISH_LIST_URL){
               if(!Array.isArray(supportFeedCache)) supportFeedCache = [];
-              supportFeedCache.unshift({
-                time: Date.now(),
-                wishId: String(wishId),
-                title: titleDisp,
-                nick: nickDisp
-              });
+              supportFeedCache.unshift(optimistic);
               supportFeedCache = supportFeedCache.slice(0, 30);
               renderFeed();
             }
             try{
               var loc = getFeed();
-              loc.unshift({ time: Date.now(), wishId: String(wishId), title: titleDisp, nick: nickDisp });
+              loc.unshift(optimistic);
               localStorage.setItem(STORAGE_KEY, JSON.stringify(loc.slice(0, 30)));
             }catch(e){}
-            return loadSupportFeed().then(renderFeed);
+            return loadSupportFeed(optimistic).then(renderFeed);
           });
         }
         var counts = getCounts();
