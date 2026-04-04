@@ -27,7 +27,7 @@ function _getSpreadsheet_() {
 }
 
 /**
- * 在編輯器執行一次即可（獨立腳本）：setSpreadsheetId_("試算表ID")
+ * 在編輯器執行一次即可（獨立腳本）：setSpreadsheetId_("1lbAqCBnYuOkzLFyn3DWMdIbZRAm7kyvnOgILQzmMDEY")
  */
 function setSpreadsheetId_(sheetId) {
   PropertiesService.getScriptProperties().setProperty("SPREADSHEET_ID", String(sheetId || "").trim());
