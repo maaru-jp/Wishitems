@@ -810,32 +810,55 @@
         if(!grid) return Promise.resolve();
         setGridLoading();
         var listUrl = WISH_LIST_URL;
+        function afterListReady(){
+          bindWishCardButtons();
+          applyCountsToCards();
+          return loadSupportFeed().then(function(){ renderFeed(); });
+        }
         return fetch(listUrl)
           .then(function(res){ return res.ok ? res.json().catch(function(){ return null; }) : Promise.reject(new Error("無法載入")); })
           .then(function(data){
             if(data && data.wishes && data.wishes.length > 0) applyWishList(data);
             else setGridEmpty();
+            return afterListReady();
           })
           .catch(function(){
-            window.__wishPoolListCallback = function(data){
-              if(data && data.wishes && data.wishes.length > 0) applyWishList(data);
-              else setGridEmpty();
-              var s = document.getElementById("wishListJsonpScript");
-              if(s) s.remove();
-            };
-            var sep = listUrl.indexOf("?") >= 0 ? "&" : "?";
-            var script = document.createElement("script");
-            script.id = "wishListJsonpScript";
-            script.src = listUrl + sep + "callback=__wishPoolListCallback";
-            script.onerror = function(){ showListLoadError(); setGridEmpty(); };
-            document.head.appendChild(script);
-          })
-          .finally(function(){
-            bindWishCardButtons();
-            applyCountsToCards();
-          })
-          .then(function(){ return loadSupportFeed(); });
+            return new Promise(function(resolve){
+              window.__wishPoolListCallback = function(data){
+                if(data && data.wishes && data.wishes.length > 0) applyWishList(data);
+                else setGridEmpty();
+                var s = document.getElementById("wishListJsonpScript");
+                if(s) s.remove();
+                afterListReady().then(resolve);
+              };
+              var sep = listUrl.indexOf("?") >= 0 ? "&" : "?";
+              var script = document.createElement("script");
+              script.id = "wishListJsonpScript";
+              script.src = listUrl + sep + "callback=__wishPoolListCallback";
+              script.onerror = function(){
+                showListLoadError();
+                setGridEmpty();
+                afterListReady().then(resolve);
+              };
+              document.head.appendChild(script);
+            });
+          });
       }
+
+      /** 定時向試算表拉取集氣動態，讓手機／電腦不同顧客的集氣都會出現在同一個跑馬燈裡 */
+      var supportFeedPollTimer = null;
+      function startSupportFeedAutoPoll(){
+        if(!WISH_LIST_URL) return;
+        if(supportFeedPollTimer != null) return;
+        supportFeedPollTimer = setInterval(function(){
+          if(document.hidden) return;
+          loadSupportFeed().then(function(){ renderFeed(); });
+        }, 35000);
+      }
+      document.addEventListener("visibilitychange", function(){
+        if(document.hidden || !WISH_LIST_URL) return;
+        loadSupportFeed().then(function(){ renderFeed(); });
+      });
 
       function parseSupportFeedPayload(data){
         if(!data) return null;
@@ -872,7 +895,9 @@
         for(var i = 0; i < list.length; i++){
           var w = list[i];
           var id = String(w.id != null ? w.id : "");
-          var n = counts[id] != null ? counts[id] : (parseInt(w.supportCount, 10) || 0);
+          var nServer = parseInt(w.supportCount, 10) || 0;
+          var nLocal = counts[id] != null ? counts[id] : 0;
+          var n = Math.max(nServer, nLocal);
           if(n <= 0) continue;
           var t = Date.now();
           if(w.createdAt){
@@ -1153,7 +1178,7 @@
                 .then(function(){
                   alert("主圖已更新。");
                   if(WISH_LIST_URL){
-                    loadWishList().then(renderFeed);
+                    loadWishList();
                   }
                 })
                 .catch(function(err){
@@ -1178,7 +1203,7 @@
               .then(function(){
                 alert("這筆許願已標記為已關閉。");
                 if(WISH_LIST_URL){
-                  loadWishList().then(renderFeed);
+                  loadWishList();
                 }
               })
               .catch(function(err){
@@ -1293,7 +1318,7 @@
           document.getElementById("wishForm").reset();
           wishImageFiles = [];
           renderUploadPreviews();
-          if(WISH_LIST_URL) loadWishList().then(renderFeed);
+          if(WISH_LIST_URL) loadWishList();
         }
         function done(){ if(btn){ btn.disabled = false; btn.textContent = "送出許願"; } }
 
@@ -1566,7 +1591,8 @@
       if(modalOk){ modalOk.addEventListener("click", submitNick); }
 
       if(WISH_LIST_URL){
-        loadWishList().then(renderFeed);
+        loadWishList();
+        startSupportFeedAutoPoll();
       } else {
         bindWishCardButtons();
         applyCountsToCards();

@@ -11,14 +11,26 @@
  * 2) 若腳本在 script.google.com 是「獨立專案」，Web App 沒有使用中試算表，必須把 ID 填在下方。
  *    ID：試算表網址 https://docs.google.com/spreadsheets/d/【這串】/edit
  */
-var SPREADSHEET_ID = "1lbAqCBnYuOkzLFyn3DWMdIbZRAm7kyvnOgILQzmMDEY";
+var SPREADSHEET_ID = "";
 
 function _getSpreadsheet_() {
   var id = String(SPREADSHEET_ID || "").replace(/^\s+|\s+$/g, "");
+  if (!id) {
+    try {
+      id = String(PropertiesService.getScriptProperties().getProperty("SPREADSHEET_ID") || "").replace(/^\s+|\s+$/g, "");
+    } catch (e0) {}
+  }
   if (id) {
     return SpreadsheetApp.openById(id);
   }
   return SpreadsheetApp.getActiveSpreadsheet();
+}
+
+/**
+ * 在編輯器執行一次即可（獨立腳本）：setSpreadsheetId_("試算表ID")
+ */
+function setSpreadsheetId_(sheetId) {
+  PropertiesService.getScriptProperties().setProperty("SPREADSHEET_ID", String(sheetId || "").trim());
 }
 
 /** 忽略分頁名稱中的空白差異 */
@@ -253,14 +265,26 @@ function doPost(e) {
     } catch (err) {
       return _postResponse({ ok: false, error: err.toString() }, returnHtml);
     }
+  } else if (params.data && (!params.source || params.source !== "form")) {
+    try {
+      json = JSON.parse(params.data);
+    } catch (err) {
+      return _postResponse({ ok: false, error: "資料格式錯誤" }, returnHtml);
+    }
   }
 
   if (!json) {
     return _postResponse({ ok: false, error: "沒有收到表單資料" }, returnHtml);
   }
 
-  // 集氣：對指定許願 +1 supportCount，寫回試算表
+  // 集氣：對指定許願 +1 supportCount，寫回試算表（鎖定避免手機／電腦同時集氣寫入衝突）
   if (json.action === "addSupport") {
+    var lock = LockService.getScriptLock();
+    try {
+      lock.waitLock(30000);
+    } catch (lockErr) {
+      return _postResponse({ ok: false, error: "系統忙碌，請稍後再試集氣" }, returnHtml);
+    }
     try {
       var wishId = String(json.wishId || "").trim();
       if (!wishId) {
@@ -330,6 +354,10 @@ function doPost(e) {
       );
     } catch (err) {
       return _postResponse({ ok: false, error: err.toString() }, returnHtml);
+    } finally {
+      try {
+        lock.releaseLock();
+      } catch (releaseErr) {}
     }
   }
 
