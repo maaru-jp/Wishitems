@@ -593,15 +593,18 @@
         return sorted;
       }
 
-      function renderWishCard(w){
+      function renderWishCard(w, listIndex){
         var id = wishIdStr(w);
+        var idxAttr = (typeof listIndex === "number" && listIndex >= 0)
+          ? (" data-list-idx=\"" + listIndex + "\"")
+          : "";
         var title = escapeHtml(w.title || "許願");
         var category = escapeHtml(w.category || "其他");
         var status = escapeHtml(w.status || "許願中");
         var count = parseInt(w.supportCount, 10) || 0;
         var imgUrl = (w.image1 != null && String(w.image1).trim() !== "") ? String(w.image1).trim() : "";
         var imgHtml = imgUrl ? "<img src=\"" + escapeHtml(imgUrl) + "\" alt=\"\" referrerpolicy=\"no-referrer\" loading=\"lazy\" onerror=\"this.style.display=\\'none\\'; this.parentElement.innerHTML=\\'🫘\\';\" />" : "🫘";
-        return "<div class=\"wish-card\" data-id=\"" + escapeHtml(id) + "\">" +
+        return "<div class=\"wish-card\" data-id=\"" + escapeHtml(id) + "\"" + idxAttr + ">" +
           "<div class=\"img-wrap\">" + imgHtml + "</div>" +
           "<div class=\"body\">" +
           "<h3 class=\"title\">" + title + "</h3>" +
@@ -680,7 +683,7 @@
         var start = (page - 1) * PAGE_SIZE;
         var end = Math.min(start + PAGE_SIZE, list.length);
         var pageList = list.slice(start, end);
-        grid.innerHTML = pageList.map(renderWishCard).join("");
+        grid.innerHTML = pageList.map(function(w, i){ return renderWishCard(w, start + i); }).join("");
         bindWishCardButtons();
         bindWishCardDetailClick();
         applyCountsToCards();
@@ -719,7 +722,7 @@
         });
         saveCounts(counts);
         if(list.length <= PAGE_SIZE){
-          grid.innerHTML = list.map(renderWishCard).join("");
+          grid.innerHTML = list.map(function(w, i){ return renderWishCard(w, i); }).join("");
           var paginationEl = document.getElementById("wishPagination");
           if(paginationEl){ paginationEl.style.display = "none"; paginationEl.innerHTML = ""; }
         } else {
@@ -729,11 +732,21 @@
         bindWishCardDetailClick();
         applyCountsToCards();
       }
-      function openWishDetail(wishId){
-        var wid = String(wishId != null ? wishId : "").trim();
-        if(!wid) return;
-        var w = wishListCache.filter(function(x){ return wishIdStr(x) === wid; })[0];
+      /** listIdx：wishListCache 陣列索引；試算表 id 重複時必用，否則 filter 會永遠對到第一筆同 id（標題與詳情不符） */
+      function openWishDetail(wishId, listIdx){
+        var w = null;
+        if(listIdx != null && listIdx !== ""){
+          var ix = parseInt(listIdx, 10);
+          if(!isNaN(ix) && ix >= 0 && ix < wishListCache.length) w = wishListCache[ix];
+        }
+        if(!w){
+          var wid0 = String(wishId != null ? wishId : "").trim();
+          if(!wid0) return;
+          w = wishListCache.filter(function(x){ return wishIdStr(x) === wid0; })[0];
+        }
         if(!w) return;
+        var wid = wishIdStr(w);
+        if(!wid) return;
         var counts = getCounts();
         var count = counts[wid] != null ? counts[wid] : (parseInt(w.supportCount, 10) || 0);
         var titleEl = document.getElementById("detailTitle");
@@ -827,7 +840,9 @@
           card.addEventListener("click", function(e){
             if(e.target.closest(".cta")) return;
             var id = (card.getAttribute("data-id") || "").trim();
-            if(id) openWishDetail(id);
+            var listIdx = card.getAttribute("data-list-idx");
+            if(listIdx != null && listIdx !== "") openWishDetail(id, listIdx);
+            else if(id) openWishDetail(id);
           });
         });
       }
