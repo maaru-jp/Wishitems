@@ -151,6 +151,9 @@
       width: 100%; padding: 12px 16px; border-radius: var(--radius-sm); border: none;
       font-size: 14px; font-weight: 900; cursor: pointer; margin-top: auto;
       transition: filter .2s, transform .1s;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
     }
     .wish-card .cta.active{ background: var(--wish); color: #fff; }
     .wish-card .cta.active:hover{ filter: brightness(1.08); transform: translateY(-1px); }
@@ -280,7 +283,12 @@
       border-color: #fecaca;
       color: #b91c1c;
     }
-    .wish-detail-modal .detail-cta{ width: 100%; padding: 12px 16px; border-radius: var(--radius-sm); border: none; font-size: 14px; font-weight: 900; cursor: pointer; margin-top: 4px; }
+    .wish-detail-modal .detail-cta{
+      width: 100%; padding: 12px 16px; border-radius: var(--radius-sm); border: none; font-size: 14px; font-weight: 900; cursor: pointer; margin-top: 4px;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+    }
     .wish-detail-modal .detail-cta.active{ background: var(--wish); color: #fff; }
     .wish-detail-modal .detail-cta.done{ background: #f3f4f6; color: var(--muted); cursor: default; }
 
@@ -487,6 +495,18 @@
       var supportFeedCache = null;
       /** 最近一次集氣 API 回傳「集氣動態分頁未寫入」時顯示於跑馬燈下方（成功同步後清除） */
       var lastFeedAppendWarning = "";
+      /** 防止手機連點／雙擊重複開啟集氣暱稱視窗（依 wishId 節流） */
+      var supportTapGuard = {};
+      /** 暱稱視窗「確定／略過」連按重複送出集氣 */
+      var submitNickLocked = false;
+      function canOpenSupportModal(wishId){
+        var w = String(wishId);
+        var now = Date.now();
+        var last = supportTapGuard[w];
+        if(last != null && now - last < 480) return false;
+        supportTapGuard[w] = now;
+        return true;
+      }
 
       /** 有 API 時：未快取則依目前許願列表 + 集氣數合成，避免兩台裝置讀到不同筆數的 localStorage；無 API 才用離線 feed */
       function getSupportFeedForDisplay(){
@@ -550,6 +570,11 @@
         if(link) return "link:" + link;
         return "title:" + (w.title || "").trim().toLowerCase();
       }
+      /** 試算表 id 去空白；空字串時多張卡會共用 wish_voted_ 導致「集氣過」錯亂，須修試算表或後端 _nextWishId_ */
+      function wishIdStr(w){
+        if(w == null) return "";
+        return String(w.id != null ? w.id : "").trim();
+      }
       /** 同商品只顯示一張卡：依連結／標題分組，每組只留第一筆並設 _groupSize = 該組人數 */
       function groupAndSortWishList(list){
         var groups = {};
@@ -569,7 +594,7 @@
       }
 
       function renderWishCard(w){
-        var id = String(w.id != null ? w.id : "");
+        var id = wishIdStr(w);
         var title = escapeHtml(w.title || "許願");
         var category = escapeHtml(w.category || "其他");
         var status = escapeHtml(w.status || "許願中");
@@ -584,13 +609,22 @@
           (w._groupSize > 1 ? "<p class=\"same-product-hint\">共 " + w._groupSize + " 人許願此商品</p>" : "") +
           "<div class=\"progress\"><div class=\"progress-text\">❤️ <span class=\"count count-num\">" + count + "</span> / <span class=\"total\">" + TOTAL + "</span> 集氣</div>" +
           "<div class=\"progress-bar\"><div class=\"progress-fill\" style=\"width:" + Math.min(100, (count / TOTAL * 100)) + "%\"></div></div></div>" +
-          "<button type=\"button\" class=\"cta active\">❤️ 我也想要 (+1 集氣)</button></div></div>";
+          (id
+            ? "<button type=\"button\" class=\"cta active\">❤️ 我也想要 (+1 集氣)</button>"
+            : "<button type=\"button\" class=\"cta done\" disabled>無法集氣（缺編號）</button>") +
+          "</div></div>";
       }
       function bindWishCardButtons(){
         document.querySelectorAll(".wish-card .cta.active").forEach(function(btn){
-          btn.addEventListener("click", function(){
+          btn.addEventListener("click", function(e){
+            e.preventDefault();
+            if(this.disabled) return;
             var card = this.closest(".wish-card");
-            var wishId = card.getAttribute("data-id");
+            var wishId = (card.getAttribute("data-id") || "").trim();
+            if(!wishId){
+              alert("此許願缺少編號，無法集氣。請請闆闆檢查試算表 id 欄是否重複或空白，並重新部署後端。");
+              return;
+            }
             var title = card.querySelector(".title");
             var titleText = title ? title.textContent.trim() : "許願";
             var votedKey = "wish_voted_" + wishId;
@@ -601,6 +635,7 @@
               this.disabled = true;
               return;
             }
+            if(!canOpenSupportModal(wishId)) return;
             openNickModal(wishId, titleText, function(){
               try { localStorage.setItem(votedKey, "1"); } catch(e) {}
             });
@@ -610,7 +645,7 @@
       function applyCountsToCards(){
         var counts = getCounts();
         document.querySelectorAll(".wish-card").forEach(function(card){
-          var id = card.getAttribute("data-id");
+          var id = (card.getAttribute("data-id") || "").trim();
           if(!id) return;
           var n = counts[id] != null ? counts[id] : 0;
           updateCardCountOnly(id, n);
@@ -678,7 +713,8 @@
         if(hint) hint.style.display = "none";
         var counts = getCounts();
         list.forEach(function(w){
-          var id = String(w.id != null ? w.id : "");
+          var id = wishIdStr(w);
+          if(!id) return;
           counts[id] = parseInt(w.supportCount, 10) || 0;
         });
         saveCounts(counts);
@@ -694,10 +730,12 @@
         applyCountsToCards();
       }
       function openWishDetail(wishId){
-        var w = wishListCache.filter(function(x){ return String(x.id != null ? x.id : "") === String(wishId); })[0];
+        var wid = String(wishId != null ? wishId : "").trim();
+        if(!wid) return;
+        var w = wishListCache.filter(function(x){ return wishIdStr(x) === wid; })[0];
         if(!w) return;
         var counts = getCounts();
-        var count = counts[wishId] != null ? counts[wishId] : (parseInt(w.supportCount, 10) || 0);
+        var count = counts[wid] != null ? counts[wid] : (parseInt(w.supportCount, 10) || 0);
         var titleEl = document.getElementById("detailTitle");
         var tagsEl = document.getElementById("detailTags");
         var countEl = document.getElementById("detailCount");
@@ -737,14 +775,14 @@
         if(adminEl){
           adminEl.style.display = isAdmin ? "flex" : "none";
         }
-        var voted = localStorage.getItem("wish_voted_" + wishId);
+        var voted = localStorage.getItem("wish_voted_" + wid);
         if(ctaEl){
-          ctaEl.setAttribute("data-wish-id", wishId);
+          ctaEl.setAttribute("data-wish-id", wid);
           if(voted){ ctaEl.classList.remove("active"); ctaEl.classList.add("done"); ctaEl.textContent = "❤️ 你已經集氣過囉!"; ctaEl.disabled = true; }
           else{ ctaEl.classList.add("active"); ctaEl.classList.remove("done"); ctaEl.textContent = "❤️ 我也想要 (+1 集氣)"; ctaEl.disabled = false; }
         }
         var modal = document.getElementById("wishDetailModal");
-        if(modal){ modal.style.display = "flex"; modal.setAttribute("data-current-id", wishId); }
+        if(modal){ modal.style.display = "flex"; modal.setAttribute("data-current-id", wid); }
       }
       function closeWishDetail(){
         var modal = document.getElementById("wishDetailModal");
@@ -788,7 +826,7 @@
         document.querySelectorAll(".wish-card").forEach(function(card){
           card.addEventListener("click", function(e){
             if(e.target.closest(".cta")) return;
-            var id = card.getAttribute("data-id");
+            var id = (card.getAttribute("data-id") || "").trim();
             if(id) openWishDetail(id);
           });
         });
@@ -918,7 +956,8 @@
         var useServerCountsOnly = !!WISH_LIST_URL;
         for(var i = 0; i < list.length; i++){
           var w = list[i];
-          var id = String(w.id != null ? w.id : "");
+          var id = wishIdStr(w);
+          if(!id) continue;
           var nServer = parseInt(w.supportCount, 10) || 0;
           var nLocal = counts[id] != null ? counts[id] : 0;
           var n = useServerCountsOnly ? nServer : Math.max(nServer, nLocal);
@@ -1194,12 +1233,20 @@
         if(detailCta){
           detailCta.addEventListener("click", function(e){
             e.stopPropagation();
-            var wishId = this.getAttribute("data-wish-id");
-            if(!wishId || this.classList.contains("done")) return;
+            e.preventDefault();
+            var wishId = (this.getAttribute("data-wish-id") || "").trim();
+            if(!wishId || this.classList.contains("done") || this.disabled) return;
             var titleEl = document.getElementById("detailTitle");
             var titleText = titleEl ? titleEl.textContent.trim() : "許願";
             var votedKey = "wish_voted_" + wishId;
-            if(localStorage.getItem(votedKey)) return;
+            if(localStorage.getItem(votedKey)){
+              this.classList.remove("active");
+              this.classList.add("done");
+              this.textContent = "❤️ 你已經集氣過囉!";
+              this.disabled = true;
+              return;
+            }
+            if(!canOpenSupportModal(wishId)) return;
             openNickModal(wishId, titleText, function(){
               try { localStorage.setItem(votedKey, "1"); } catch(err) {}
               var n = getCounts()[wishId];
@@ -1590,8 +1637,19 @@
           });
       }
       function doSupport(wishId, title, nick){
+        var vid = String(wishId != null ? wishId : "").trim();
+        if(!vid){
+          if(WISH_SUBMIT_URL) return Promise.reject(new Error("此許願缺少編號"));
+          return;
+        }
+        try {
+          if(localStorage.getItem("wish_voted_" + vid)){
+            if(WISH_SUBMIT_URL) return Promise.reject(new Error("您已對此許願集氣過了"));
+            return;
+          }
+        } catch(e0) {}
         if(WISH_SUBMIT_URL){
-          return apiAddSupport(wishId, title, nick || "有人").then(function(data){
+          return apiAddSupport(vid, title, nick || "有人").then(function(data){
             var n = data.supportCount;
             if(data.feedAppended === false){
               lastFeedAppendWarning = data.feedAppendError
@@ -1599,20 +1657,20 @@
                 : "「集氣動態」分頁未寫入試算表。若為獨立 Apps Script 專案，請在 許願池API.gs 設定 SPREADSHEET_ID 並重新部署。";
             }
             var counts = getCounts();
-            counts[wishId] = n;
+            counts[vid] = n;
             saveCounts(counts);
             for(var wi = 0; wi < wishListCache.length; wi++){
-              if(String(wishListCache[wi].id != null ? wishListCache[wi].id : "") === String(wishId)){
+              if(wishIdStr(wishListCache[wi]) === vid){
                 wishListCache[wi].supportCount = n;
                 break;
               }
             }
-            updateCardUI(wishId, n);
+            updateCardUI(vid, n);
             var nickDisp = (nick && String(nick).trim()) ? String(nick).trim() : "有人";
             var titleDisp = (title && String(title).trim()) ? String(title).trim() : "許願";
             var optimistic = {
               time: Date.now(),
-              wishId: String(wishId),
+              wishId: String(vid),
               title: titleDisp,
               nick: nickDisp
             };
@@ -1631,15 +1689,17 @@
           });
         }
         var counts = getCounts();
-        var n = (counts[wishId] || 0) + 1;
+        var n = (counts[vid] || 0) + 1;
         if(n > TOTAL) n = TOTAL;
-        counts[wishId] = n;
+        counts[vid] = n;
         saveCounts(counts);
-        addToFeed(wishId, title, nick || "有人");
-        updateCardUI(wishId, n);
+        addToFeed(vid, title, nick || "有人");
+        updateCardUI(vid, n);
       }
       function updateCardUI(wishId, n){
-        var card = document.querySelector(".wish-card[data-id='" + wishId + "']");
+        var wid = String(wishId != null ? wishId : "").trim();
+        if(!wid) return;
+        var card = document.querySelector(".wish-card[data-id='" + wid + "']");
         if(!card) return;
         var countEl = card.querySelector(".progress .count");
         var fillEl = card.querySelector(".progress-fill");
@@ -1656,7 +1716,9 @@
         }
       }
       function updateCardCountOnly(wishId, n){
-        var card = document.querySelector(".wish-card[data-id='" + wishId + "']");
+        var wid = String(wishId != null ? wishId : "").trim();
+        if(!wid) return;
+        var card = document.querySelector(".wish-card[data-id='" + wid + "']");
         if(!card) return;
         var countEl = card.querySelector(".progress .count");
         var fillEl = card.querySelector(".progress-fill");
@@ -1679,10 +1741,19 @@
       function submitNick(){
         var nick = nickInput ? nickInput.value.trim() : "";
         if(!pendingSupport){ closeNickModal(); return; }
+        if(submitNickLocked) return;
         var cb = pendingSupport.cb;
         var p = doSupport(pendingSupport.wishId, pendingSupport.title, nick || null);
         if(p && typeof p.then === "function"){
-          p.then(function(){ if(cb) cb(); }).catch(function(err){ alert("集氣失敗，請稍後再試。\n" + (err && err.message ? err.message : "")); }).finally(closeNickModal);
+          submitNickLocked = true;
+          if(modalOk) modalOk.disabled = true;
+          if(modalSkip) modalSkip.disabled = true;
+          p.then(function(){ if(cb) cb(); }).catch(function(err){ alert("集氣失敗，請稍後再試。\n" + (err && err.message ? err.message : "")); }).finally(function(){
+            submitNickLocked = false;
+            if(modalOk) modalOk.disabled = false;
+            if(modalSkip) modalSkip.disabled = false;
+            closeNickModal();
+          });
         } else {
           if(cb) cb();
           closeNickModal();
