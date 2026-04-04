@@ -11,7 +11,7 @@
  * 2) 若腳本在 script.google.com 是「獨立專案」，Web App 沒有使用中試算表，必須把 ID 填在下方。
  *    ID：試算表網址 https://docs.google.com/spreadsheets/d/【這串】/edit
  */
-var SPREADSHEET_ID = "1lbAqCBnYuOkzLFyn3DWMdIbZRAm7kyvnOgILQzmMDEY";
+var SPREADSHEET_ID = "";
 
 function _getSpreadsheet_() {
   var id = String(SPREADSHEET_ID || "").replace(/^\s+|\s+$/g, "");
@@ -60,6 +60,70 @@ function _ensureFeedHeaders_(sh) {
 }
 
 /**
+ * 由第一個分頁（許願列表）產生「有集氣的品項」摘要列（supportCount>0），補足集氣動態分頁未寫入時的顯示
+ */
+function _supportFeedFromWishSheet_(ss) {
+  var out = [];
+  try {
+    var sheet = ss.getSheets()[0];
+    var data = sheet.getDataRange().getValues();
+    if (!data || data.length < 2) return out;
+    var headers = data[0];
+    var idIdx = headers.indexOf("id");
+    var titleIdx = headers.indexOf("title");
+    var scIdx = headers.indexOf("supportCount");
+    var createdIdx = headers.indexOf("createdAt");
+    if (idIdx === -1 || scIdx === -1) return out;
+    for (var r = 1; r < data.length; r++) {
+      var row = data[r];
+      var n = parseInt(row[scIdx], 10) || 0;
+      if (n <= 0) continue;
+      var id = String(row[idIdx] != null ? row[idIdx] : "");
+      var titleStr = titleIdx !== -1 && row[titleIdx] != null ? String(row[titleIdx]) : "";
+      var t = Date.now() - r * 5000;
+      if (createdIdx !== -1 && row[createdIdx]) {
+        var d0 = new Date(row[createdIdx]);
+        if (!isNaN(d0.getTime())) t = d0.getTime();
+      }
+      out.push({
+        time: t,
+        wishId: id,
+        title: titleStr,
+        nick: "累計 " + n + " 集氣"
+      });
+    }
+    out.sort(function (a, b) {
+      return b.time - a.time;
+    });
+  } catch (e) {
+    return [];
+  }
+  return out;
+}
+
+/** 合併：事件列優先；若某 wishId 尚無任何事件列，補上許願表的累計摘要 */
+function _mergeEventFeedAndWishSummary_(eventRows, wishRows) {
+  var seen = {};
+  var merged = [];
+  var i;
+  for (i = 0; i < eventRows.length; i++) {
+    seen[String(eventRows[i].wishId)] = true;
+    merged.push(eventRows[i]);
+  }
+  for (i = 0; i < wishRows.length; i++) {
+    var w = wishRows[i];
+    if (!seen[String(w.wishId)]) {
+      merged.push(w);
+      seen[String(w.wishId)] = true;
+    }
+  }
+  merged.sort(function (a, b) {
+    return b.time - a.time;
+  });
+  return merged;
+}
+
+/**
  * GET：讀取許願列表。加上 ?callback=函數名 可回傳 JSONP（避開 CORS）
  * ?type=supportFeed 讀取「集氣動態」分頁（與許願列表分開）
  */
@@ -101,57 +165,56 @@ function doGet(e) {
 }
 
 /**
- * 讀取第二張分頁「集氣動態」：欄位 time, wishId, title, nick；回傳最新 100 筆（新→舊）
+ * 讀取集氣動態：① 集氣動態分頁的事件列 ② 合併許願表 supportCount>0 的摘要（無事件列的品項仍會顯示）
  */
 function _getSupportFeed(callback) {
-  var rows = [];
+  var eventRows = [];
   try {
     var ss = _getSpreadsheet_();
     var sh = _getFeedSheet_(ss);
-    if (!sh) {
-      return _jsonResponse({ feed: [] }, callback);
-    }
-    var data = sh.getDataRange().getValues();
-    if (!data || data.length < 2) {
-      return _jsonResponse({ feed: [] }, callback);
-    }
-    var headers = data[0];
-    var timeIdx = headers.indexOf("time");
-    var wishIdIdx = headers.indexOf("wishId");
-    var titleIdx = headers.indexOf("title");
-    var nickIdx = headers.indexOf("nick");
-    if (timeIdx === -1 || wishIdIdx === -1) {
-      return _jsonResponse({ feed: [] }, callback);
-    }
-    for (var i = 1; i < data.length; i++) {
-      var row = data[i];
-      var t = row[timeIdx];
-      var timeMs = 0;
-      if (typeof t === "number") {
-        timeMs = t;
-      } else if (t instanceof Date) {
-        timeMs = t.getTime();
-      } else if (t != null && t !== "") {
-        var parsed = new Date(t);
-        timeMs = isNaN(parsed.getTime()) ? 0 : parsed.getTime();
+    if (sh) {
+      var data = sh.getDataRange().getValues();
+      if (data && data.length >= 2) {
+        var headers = data[0];
+        var timeIdx = headers.indexOf("time");
+        var wishIdIdx = headers.indexOf("wishId");
+        var titleIdx = headers.indexOf("title");
+        var nickIdx = headers.indexOf("nick");
+        if (timeIdx !== -1 && wishIdIdx !== -1) {
+          for (var i = 1; i < data.length; i++) {
+            var row = data[i];
+            var t = row[timeIdx];
+            var timeMs = 0;
+            if (typeof t === "number") {
+              timeMs = t;
+            } else if (t instanceof Date) {
+              timeMs = t.getTime();
+            } else if (t != null && t !== "") {
+              var parsed = new Date(t);
+              timeMs = isNaN(parsed.getTime()) ? 0 : parsed.getTime();
+            }
+            eventRows.push({
+              time: timeMs,
+              wishId: String(row[wishIdIdx] != null ? row[wishIdIdx] : ""),
+              title: String(titleIdx !== -1 && row[titleIdx] != null ? row[titleIdx] : ""),
+              nick: String(nickIdx !== -1 && row[nickIdx] != null && String(row[nickIdx]).trim() !== "" ? row[nickIdx] : "有人")
+            });
+          }
+        }
       }
-      rows.push({
-        time: timeMs,
-        wishId: String(row[wishIdIdx] != null ? row[wishIdIdx] : ""),
-        title: String(titleIdx !== -1 && row[titleIdx] != null ? row[titleIdx] : ""),
-        nick: String(nickIdx !== -1 && row[nickIdx] != null && String(row[nickIdx]).trim() !== "" ? row[nickIdx] : "有人")
-      });
     }
-    rows.sort(function (a, b) {
+    eventRows.sort(function (a, b) {
       return b.time - a.time;
     });
-    if (rows.length > 100) {
-      rows = rows.slice(0, 100);
+    var wishSummary = _supportFeedFromWishSheet_(ss);
+    var merged = _mergeEventFeedAndWishSummary_(eventRows, wishSummary);
+    if (merged.length > 100) {
+      merged = merged.slice(0, 100);
     }
+    return _jsonResponse({ feed: merged }, callback);
   } catch (err) {
-    rows = [];
+    return _jsonResponse({ feed: [] }, callback);
   }
-  return _jsonResponse({ feed: rows }, callback);
 }
 
 function _jsonResponse(obj, callback) {

@@ -864,6 +864,55 @@
         merged.sort(function(a, b){ return feedItemTime(b) - feedItemTime(a); });
         return merged.slice(0, 100);
       }
+      /** 由目前載入的許願列表 + 集氣數，產生「有集氣的品項」摘要（與 GAS 備援一致，不依賴集氣動態分頁） */
+      function buildSyntheticFeedFromWishList(){
+        var out = [];
+        var counts = getCounts();
+        var list = wishListCache || [];
+        for(var i = 0; i < list.length; i++){
+          var w = list[i];
+          var id = String(w.id != null ? w.id : "");
+          var n = counts[id] != null ? counts[id] : (parseInt(w.supportCount, 10) || 0);
+          if(n <= 0) continue;
+          var t = Date.now();
+          if(w.createdAt){
+            var d = new Date(w.createdAt);
+            if(!isNaN(d.getTime())) t = d.getTime();
+          } else {
+            t = Date.now() - i * 1000;
+          }
+          out.push({
+            time: t,
+            wishId: id,
+            title: w.title || "許願",
+            nick: "累計 " + n + " 集氣"
+          });
+        }
+        out.sort(function(a, b){ return feedItemTime(b) - feedItemTime(a); });
+        return out.slice(0, 100);
+      }
+      /** 伺服器 feed 與本地摘要合併：同一 wishId 以伺服器事件列為優先，無事件時才顯示累計 */
+      function mergeEventAndWishFeed(serverFeed, syntheticFeed){
+        var s = serverFeed != null ? serverFeed : [];
+        var y = syntheticFeed != null ? syntheticFeed : [];
+        if(!s.length) return y.slice(0, 100);
+        if(!y.length) return s.slice(0, 100);
+        var seen = {};
+        var merged = [];
+        var i;
+        for(i = 0; i < s.length; i++){
+          seen[String(s[i].wishId)] = true;
+          merged.push(s[i]);
+        }
+        for(i = 0; i < y.length; i++){
+          if(!seen[String(y[i].wishId)]){
+            merged.push(y[i]);
+            seen[String(y[i].wishId)] = true;
+          }
+        }
+        merged.sort(function(a, b){ return feedItemTime(b) - feedItemTime(a); });
+        return merged.slice(0, 100);
+      }
       /** mergeLatest：集氣成功後傳入，避免快取／延遲導致最新一筆消失 */
       function loadSupportFeed(mergeLatest){
         if(!WISH_LIST_URL){
@@ -874,7 +923,9 @@
         var url = WISH_LIST_URL + sep + "type=supportFeed&feed=1&_ts=" + Date.now();
         var applyMerged = function(rawFeed){
           var feed = rawFeed != null ? rawFeed : [];
-          supportFeedCache = mergeLatest ? mergePendingSupportFeed(feed, mergeLatest) : feed;
+          var syn = buildSyntheticFeedFromWishList();
+          var merged = mergeEventAndWishFeed(feed, syn);
+          supportFeedCache = mergeLatest ? mergePendingSupportFeed(merged, mergeLatest) : merged;
         };
         return fetch(url, { cache: "no-store" })
           .then(function(res){
@@ -896,8 +947,10 @@
             var pendingMerge = mergeLatest;
             window.__wishPoolFeedCallback = function(data){
               var feed = parseSupportFeedPayload(data);
-              var raw = feed !== null ? feed : getFeed();
-              supportFeedCache = pendingMerge ? mergePendingSupportFeed(raw, pendingMerge) : raw;
+              var raw = feed !== null ? feed : [];
+              var syn = buildSyntheticFeedFromWishList();
+              var merged = mergeEventAndWishFeed(raw.length ? raw : getFeed(), syn);
+              supportFeedCache = pendingMerge ? mergePendingSupportFeed(merged, pendingMerge) : merged;
               var s = document.getElementById("wishFeedJsonpScript");
               if(s) s.remove();
               renderFeed();
@@ -907,8 +960,10 @@
             script.id = "wishFeedJsonpScript";
             script.src = url + sep2 + "callback=__wishPoolFeedCallback&_ts=" + Date.now();
             script.onerror = function(){
-              var raw = getFeed();
-              supportFeedCache = pendingMerge ? mergePendingSupportFeed(raw, pendingMerge) : raw;
+              var loc = getFeed();
+              var syn = buildSyntheticFeedFromWishList();
+              var merged = mergeEventAndWishFeed(loc.length ? loc : [], syn);
+              supportFeedCache = pendingMerge ? mergePendingSupportFeed(merged, pendingMerge) : merged;
               renderFeed();
             };
             document.head.appendChild(script);
