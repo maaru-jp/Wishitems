@@ -76,6 +76,29 @@
     }
     .wish-pagination .arrow-btn:disabled{ opacity: .4; cursor: not-allowed; }
     @media (max-width: 560px){
+      .wrap{ padding: 16px 12px 40px; }
+      /* 手機：兩欄，每頁 12 張（6 列×2）由既有 PAGE_SIZE=12 分頁 */
+      .grid{
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px 12px;
+      }
+      .wish-card .img-wrap{ font-size: 32px; }
+      .wish-card .body{ padding: 10px 8px; }
+      .wish-card .title{
+        font-size: 13px; font-weight: 900; margin: 0 0 6px; line-height: 1.3;
+        display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
+      .wish-card .tags{ margin-bottom: 8px; gap: 4px; }
+      .wish-card .tag{ font-size: 10px; padding: 3px 6px; }
+      .wish-card .same-product-hint{ font-size: 10px; margin: -2px 0 6px; }
+      .wish-card .progress{ margin-bottom: 8px; }
+      .wish-card .progress-text{ font-size: 11px; margin-bottom: 4px; }
+      .wish-card .progress-text .count-num{ font-size: 12px; }
+      .wish-card .progress-bar{ height: 6px; }
+      .wish-card .cta{
+        padding: 8px 6px; font-size: 11px; font-weight: 900; gap: 2px;
+      }
       .wish-pagination{ gap: 10px; margin-top: 20px; }
       .wish-pagination .page-btn, .wish-pagination .arrow-btn{
         width: 48px; height: 48px; min-width: 48px; font-size: 16px;
@@ -1386,7 +1409,14 @@
           .then(function(res){ return res.json().catch(function(){ return {}; }); })
           .then(function(data){
             if(data && data.ok === false) return Promise.reject(new Error(data.error || "集氣失敗"));
-            return { ok: true, supportCount: typeof data.supportCount === "number" ? data.supportCount : (parseInt(data.supportCount, 10) || 0) };
+            if(data && data.feedAppended === false && data.feedAppendError){
+              console.warn("[集氣動態] 未寫入試算表：", data.feedAppendError, "（若使用獨立 Apps Script 專案，請在 許願池API.gs 設定 SPREADSHEET_ID）");
+            }
+            return {
+              ok: true,
+              supportCount: typeof data.supportCount === "number" ? data.supportCount : (parseInt(data.supportCount, 10) || 0),
+              feedAppended: data.feedAppended
+            };
           });
       }
       function doSupport(wishId, title, nick){

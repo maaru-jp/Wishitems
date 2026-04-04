@@ -6,10 +6,39 @@
  */
 
 /**
- * 取得集氣動態分頁：優先名稱「集氣動態」，否則用試算表第二個分頁；僅一張表時自動新增「集氣動態」
+ * 【必讀】試算表綁定（二選一，否則集氣動態可能無法寫入）：
+ * 1) 建議：在「該本 Google 試算表」→ 擴充功能 → Apps Script → 貼上程式 → 部署。SPREADSHEET_ID 請保持空白。
+ * 2) 若腳本在 script.google.com 是「獨立專案」，Web App 沒有使用中試算表，必須把 ID 填在下方。
+ *    ID：試算表網址 https://docs.google.com/spreadsheets/d/【這串】/edit
+ */
+var SPREADSHEET_ID = "";
+
+function _getSpreadsheet_() {
+  var id = String(SPREADSHEET_ID || "").replace(/^\s+|\s+$/g, "");
+  if (id) {
+    return SpreadsheetApp.openById(id);
+  }
+  return SpreadsheetApp.getActiveSpreadsheet();
+}
+
+/** 忽略分頁名稱中的空白差異 */
+function _findSheetByNormalizedName_(ss, wanted) {
+  var w = String(wanted).replace(/\s/g, "");
+  var sheets = ss.getSheets();
+  for (var i = 0; i < sheets.length; i++) {
+    if (String(sheets[i].getName()).replace(/\s/g, "") === w) {
+      return sheets[i];
+    }
+  }
+  return null;
+}
+
+/**
+ * 取得集氣動態分頁：優先名稱「集氣動態」（含寬鬆比對），否則用第二個分頁；僅一張表時自動新增「集氣動態」
  */
 function _getFeedSheet_(ss) {
-  var sh = ss.getSheetByName("集氣動態");
+  if (!ss) return null;
+  var sh = ss.getSheetByName("集氣動態") || _findSheetByNormalizedName_(ss, "集氣動態");
   if (sh) return sh;
   var sheets = ss.getSheets();
   if (sheets.length > 1) {
@@ -18,7 +47,7 @@ function _getFeedSheet_(ss) {
   try {
     return ss.insertSheet("集氣動態");
   } catch (err) {
-    return ss.getSheetByName("集氣動態");
+    return _findSheetByNormalizedName_(ss, "集氣動態") || ss.getSheetByName("集氣動態");
   }
 }
 
@@ -44,7 +73,7 @@ function doGet(e) {
   }
 
   // 許願列表一律讀「第一個分頁」，避免編輯器目前選在「集氣動態」時讀錯表
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var ss = _getSpreadsheet_();
   var sheet = ss.getSheets()[0];
   var data = [];
   try {
@@ -77,7 +106,7 @@ function doGet(e) {
 function _getSupportFeed(callback) {
   var rows = [];
   try {
-    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var ss = _getSpreadsheet_();
     var sh = _getFeedSheet_(ss);
     if (!sh) {
       return _jsonResponse({ feed: [] }, callback);
@@ -174,7 +203,7 @@ function doPost(e) {
       if (!wishId) {
         return _postResponse({ ok: false, error: "缺少許願編號" }, returnHtml);
       }
-      var ss = SpreadsheetApp.getActiveSpreadsheet();
+      var ss = _getSpreadsheet_();
       var sheet = ss.getSheets()[0];
       var data = sheet.getDataRange().getValues();
       if (!data || data.length < 2) {
@@ -201,6 +230,8 @@ function doPost(e) {
       sheet.getRange(targetRow, supportCountIdx + 1).setValue(newCount);
 
       var feedSheet = _getFeedSheet_(ss);
+      var feedAppended = false;
+      var feedAppendError = "";
       if (feedSheet) {
         _ensureFeedHeaders_(feedSheet);
         var titleSnap = String(json.title || "").trim();
@@ -217,12 +248,23 @@ function doPost(e) {
         var timeVal = new Date().getTime();
         try {
           feedSheet.appendRow([timeVal, wishId, titleSnap, nickVal]);
+          feedAppended = true;
         } catch (appendErr) {
-          // 仍回傳集氣成功，避免前台顯示失敗；請檢查分頁權限或欄位
+          feedAppendError = String(appendErr);
         }
+      } else {
+        feedAppendError = "找不到集氣動態分頁";
       }
 
-      return _postResponse({ ok: true, supportCount: newCount }, returnHtml);
+      return _postResponse(
+        {
+          ok: true,
+          supportCount: newCount,
+          feedAppended: feedAppended,
+          feedAppendError: feedAppendError || undefined
+        },
+        returnHtml
+      );
     } catch (err) {
       return _postResponse({ ok: false, error: err.toString() }, returnHtml);
     }
@@ -231,7 +273,7 @@ function doPost(e) {
   // 管理員：更新單筆許願（狀態 / 圖片）
   if (json.action === "updateWish") {
     try {
-      var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
+      var sheet = _getSpreadsheet_().getSheets()[0];
       var data = sheet.getDataRange().getValues();
       if (!data || data.length < 2) {
         return _postResponse({ ok: false, error: "目前沒有資料可更新" }, returnHtml);
@@ -279,7 +321,7 @@ function doPost(e) {
   }
 
   try {
-    var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
+    var sheet = _getSpreadsheet_().getSheets()[0];
     var lastRow = sheet.getLastRow();
     var newId = (lastRow < 1) ? 1 : lastRow;
     var now = Utilities.formatDate(new Date(), "Asia/Taipei", "yyyy-MM-dd HH:mm");
