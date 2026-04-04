@@ -6,6 +6,31 @@
  */
 
 /**
+ * 取得集氣動態分頁：優先名稱「集氣動態」，否則用試算表第二個分頁；僅一張表時自動新增「集氣動態」
+ */
+function _getFeedSheet_(ss) {
+  var sh = ss.getSheetByName("集氣動態");
+  if (sh) return sh;
+  var sheets = ss.getSheets();
+  if (sheets.length > 1) {
+    return sheets[1];
+  }
+  try {
+    return ss.insertSheet("集氣動態");
+  } catch (err) {
+    return ss.getSheetByName("集氣動態");
+  }
+}
+
+/** 分頁完全空白時寫入標題列，否則讀取不到欄位 */
+function _ensureFeedHeaders_(sh) {
+  if (!sh) return;
+  if (sh.getLastRow() < 1) {
+    sh.appendRow(["time", "wishId", "title", "nick"]);
+  }
+}
+
+/**
  * GET：讀取許願列表。加上 ?callback=函數名 可回傳 JSONP（避開 CORS）
  * ?type=supportFeed 讀取「集氣動態」分頁（與許願列表分開）
  */
@@ -53,7 +78,7 @@ function _getSupportFeed(callback) {
   var rows = [];
   try {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
-    var sh = ss.getSheetByName("集氣動態");
+    var sh = _getFeedSheet_(ss);
     if (!sh) {
       return _jsonResponse({ feed: [] }, callback);
     }
@@ -175,8 +200,9 @@ function doPost(e) {
       var newCount = current + 1;
       sheet.getRange(targetRow, supportCountIdx + 1).setValue(newCount);
 
-      var feedSheet = ss.getSheetByName("集氣動態");
+      var feedSheet = _getFeedSheet_(ss);
       if (feedSheet) {
+        _ensureFeedHeaders_(feedSheet);
         var titleSnap = String(json.title || "").trim();
         if (titleSnap.length > 200) {
           titleSnap = titleSnap.substring(0, 200);
@@ -189,7 +215,11 @@ function doPost(e) {
           nickVal = "有人";
         }
         var timeVal = new Date().getTime();
-        feedSheet.appendRow([timeVal, wishId, titleSnap, nickVal]);
+        try {
+          feedSheet.appendRow([timeVal, wishId, titleSnap, nickVal]);
+        } catch (appendErr) {
+          // 仍回傳集氣成功，避免前台顯示失敗；請檢查分頁權限或欄位
+        }
       }
 
       return _postResponse({ ok: true, supportCount: newCount }, returnHtml);
