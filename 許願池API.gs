@@ -21,7 +21,7 @@ function _getSpreadsheet_() {
     } catch (e0) {}
   }
   if (id) {
-    return SpreadsheetApp.openById(1lbAqCBnYuOkzLFyn3DWMdIbZRAm7kyvnOgILQzmMDEY);
+    return SpreadsheetApp.openById(ID);
   }
   return SpreadsheetApp.getActiveSpreadsheet();
 }
