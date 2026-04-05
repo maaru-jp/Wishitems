@@ -1056,11 +1056,7 @@
           image2: patch.image2 || "",
           image3: patch.image3 || ""
         };
-        return fetch(WISH_SUBMIT_URL, {
-          method: "POST",
-          headers: { "Content-Type": "text/plain; charset=utf-8" },
-          body: JSON.stringify(payload)
-        })
+        return gasPostJson(WISH_SUBMIT_URL, payload, 45000)
           .then(function(res){ return res.json().catch(function(){ return {}; }).then(function(data){ if(!res.ok || data.ok === false) return Promise.reject(new Error(data.error || "更新失敗")); return data; }); });
       }
       function bindWishCardDetailClick(){
@@ -1622,6 +1618,19 @@
         ]);
       }
 
+      /**
+       * POST 到 GAS Web App：用表單欄位 data=JSON，Apps Script 會填滿 e.parameter.data；
+       * 若只用 text/plain 送 JSON，部分瀏覽器經 302 轉址會丟失 body，試算表寫不進去。
+       */
+      function gasPostJson(url, payloadObj, timeoutMs){
+        var body = "data=" + encodeURIComponent(JSON.stringify(payloadObj));
+        return wishFetchWithTimeout(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
+          body: body
+        }, timeoutMs != null ? timeoutMs : 55000);
+      }
+
       function uploadWishImages(){
         // 若未設定 Cloudinary，直接略過圖片上傳（回傳空陣列）
         if(!CLOUDINARY_CLOUD_NAME || !CLOUDINARY_UPLOAD_PRESET){
@@ -1734,11 +1743,7 @@
         }
         function done(){ if(btn){ btn.disabled = false; btn.textContent = "送出許願"; } }
 
-        wishFetchWithTimeout(WISH_SUBMIT_URL, {
-          method: "POST",
-          headers: { "Content-Type": "text/plain; charset=utf-8" },
-          body: JSON.stringify(payload)
-        }, submitTimeoutMs)
+        gasPostJson(WISH_SUBMIT_URL, payload, submitTimeoutMs)
           .then(function(res){ return res.json().catch(function(){ return {}; }).then(function(data){ if(!res.ok) return Promise.reject(new Error(data.error || "送出失敗")); return data; }); })
           .then(function(data){ onSuccess(data); done(); })
           .catch(function(err){
@@ -1907,11 +1912,7 @@
           title: String(title || "").slice(0, 200),
           nick: String(nick || "有人").slice(0, 40)
         };
-        return fetch(WISH_SUBMIT_URL, {
-          method: "POST",
-          headers: { "Content-Type": "text/plain; charset=utf-8" },
-          body: JSON.stringify(payload)
-        })
+        return gasPostJson(WISH_SUBMIT_URL, payload, 45000)
           .then(function(res){ return res.json().catch(function(){ return {}; }); })
           .then(function(data){
             if(data && data.ok === false) return Promise.reject(new Error(data.error || "集氣失敗"));
