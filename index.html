@@ -1625,47 +1625,58 @@
       }
 
       /**
-       * POST 到 GAS Web App：用表單欄位 data=JSON，Apps Script 會填滿 e.parameter.data；
-       * 若只用 text/plain 送 JSON，部分瀏覽器經 302 轉址會丟失 body，試算表寫不進去。
+       * POST 到 GAS Web App：純 JSON（text/plain），後端以 e.postData.contents 解析。
+       * 回應解析見 parseGasResponse（勿用 res.json()，避免非純 JSON 時拋 SyntaxError）。
        */
       function gasPostJson(url, payloadObj, timeoutMs){
-        var body = "data=" + encodeURIComponent(JSON.stringify(payloadObj));
         return wishFetchWithTimeout(url, {
           method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
-          body: body
+          headers: { "Content-Type": "text/plain; charset=utf-8" },
+          body: JSON.stringify(payloadObj)
         }, timeoutMs != null ? timeoutMs : 55000);
       }
-      /** GAS 回應一律先 text 再解析；勿用 res.json()（若回應被轉成 data=… 字串會拋 SyntaxError） */
+      /** 正規化回應字串（BOM／空白會讓 data= 判斷失敗，誤觸 JSON.parse 整段） */
+      function normalizeGasResponseText(text){
+        return String(text != null ? text : "")
+          .replace(/^\uFEFF/, "")
+          .replace(/^[\s\u200B\u200C\u200D]+/, "")
+          .trim();
+      }
+      /** 從 GAS 回應擷取 JSON（支援純 JSON 或 data=… 表單字串） */
       function parseGasResponse(res){
         return res.text().then(function(text){
-          var t = String(text != null ? text : "").trim();
+          var t = normalizeGasResponseText(text);
           if(!t){
             if(!res.ok) throw new Error("HTTP " + res.status + "（無內容）");
             return {};
           }
-          var first = t.charAt(0);
-          if(first === "{" || first === "["){
-            try { return JSON.parse(t); } catch(e){
+          if(t.indexOf("<!DOCTYPE") === 0 || t.toLowerCase().indexOf("<html") !== -1){
+            throw new Error("伺服器回傳網頁而非 JSON，請確認 Apps Script 部署網址與「網路應用程式」版本");
+          }
+          var dataIdx = t.indexOf("data=");
+          if(dataIdx !== -1){
+            var rest = t.substring(dataIdx + 5);
+            var amp = rest.indexOf("&");
+            if(amp !== -1) rest = rest.substring(0, amp);
+            rest = rest.replace(/\+/g, " ");
+            try {
+              return JSON.parse(decodeURIComponent(rest));
+            } catch(e0){
+              try {
+                return JSON.parse(rest);
+              } catch(e1){
+                throw new Error("無法解析集氣回應（data= 格式異常），請重新整理後再試");
+              }
+            }
+          }
+          if(t.charAt(0) === "{" || t.charAt(0) === "["){
+            try {
+              return JSON.parse(t);
+            } catch(e2){
               throw new Error("伺服器回傳的 JSON 無法解析");
             }
           }
-          if(t.indexOf("data=") === 0){
-            var rest = t.substring(5);
-            var amp = rest.indexOf("&");
-            if(amp !== -1) rest = rest.substring(0, amp);
-            try {
-              return JSON.parse(decodeURIComponent(rest));
-            } catch(e2){
-              throw new Error("回應為 data= 格式但內容不是合法 JSON（請確認 GAS 部署與網址）");
-            }
-          }
-          if(t.indexOf("<!DOCTYPE") === 0 || t.indexOf("<html") !== -1){
-            throw new Error("伺服器回傳網頁而非 JSON，請確認 Apps Script 已部署為「網路應用程式」");
-          }
-          try { return JSON.parse(t); } catch(e3){
-            throw new Error("無法解析回應：" + (t.length > 100 ? t.slice(0, 100) + "…" : t));
-          }
+          throw new Error("無法解析回應，請確認已部署最新網頁與 GAS");
         });
       }
 
@@ -2107,7 +2118,11 @@
             if(cb) cb();
             closeNickModal();
           }).catch(function(err){
-            alert("集氣失敗，請稍後再試。\n" + (err && err.message ? err.message : ""));
+            var em = err && err.message ? String(err.message) : "";
+            if(em.indexOf("Unexpected token") >= 0 || em.indexOf("JSON") >= 0){
+              em = "回應格式異常（請重新整理頁面，並確認已上傳最新 index.html）";
+            }
+            alert("集氣失敗，請稍後再試。\n" + (em || err));
           }).finally(function(){
             submitNickLocked = false;
             if(modalOk) modalOk.disabled = false;
