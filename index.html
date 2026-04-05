@@ -620,17 +620,32 @@
         if(link) return "link:" + link;
         return "title:" + (w.title || "").trim().toLowerCase();
       }
-      /** 試算表 id 去空白；空字串時多張卡會共用 wish_voted_ 導致「集氣過」錯亂，須修試算表或後端 _nextWishId_ */
+      /** 試算表 id 去空白；集氣紀錄勿只用 wish_voted_<id>，否則編號回收／重複時新卡會誤顯示已集氣 */
       function wishIdStr(w){
         if(w == null) return "";
-        return String(w.id != null ? w.id : "").trim();
+        var v = w.id;
+        if(v != null && String(v).trim() !== "") return String(v).trim();
+        var alts = [w.wishId, w.WishId, w.ID, w.Id];
+        for(var ai = 0; ai < alts.length; ai++){
+          if(alts[ai] != null && String(alts[ai]).trim() !== "") return String(alts[ai]).trim();
+        }
+        return "";
       }
-      /** 集氣紀錄用指紋（同 id 不同商品時可區分）；勿只用 id，否則試算表重複編號會讓新卡顯示已集氣 */
-      function wishVoteFingerprintSource(w){
+      /** 舊版指紋（僅供 read 相容）；新寫入一律用 wishVoteFingerprintSource */
+      function wishVoteFingerprintSourceLegacy(w){
         if(!w) return "";
         return String((w.title || "").trim().toLowerCase()) + "\u0001" +
           String((w.link || "").trim().toLowerCase().replace(/\/+$/, "")) + "\u0001" +
           String(w.createdAt != null ? w.createdAt : "");
+      }
+      /** 集氣紀錄用指紋（同 id 不同商品時可區分）；欄位盡量多以免碰撞 */
+      function wishVoteFingerprintSource(w){
+        if(!w) return "";
+        return String((w.title || "").trim().toLowerCase()) + "\u0001" +
+          String((w.link || "").trim().toLowerCase().replace(/\/+$/, "")) + "\u0001" +
+          String(w.createdAt != null ? w.createdAt : "") + "\u0001" +
+          String((w.note || "").trim().toLowerCase()) + "\u0001" +
+          String(w.category != null ? w.category : "").trim().toLowerCase();
       }
       function voteKeyHash(s){
         var h = 5381;
@@ -640,29 +655,25 @@
         }
         return (h >>> 0).toString(36);
       }
-      function wishVoteStorageKey(w){
-        if(!w) return "";
+      function wishVoteStorageKeyWithFingerprint(w, fpFn){
+        if(!w || !fpFn) return "";
         var id = wishIdStr(w);
-        var tag = voteKeyHash(wishVoteFingerprintSource(w));
+        var tag = voteKeyHash(fpFn(w));
         if(id) return "wish_voted_" + id + "_" + tag;
         return "wish_voted_noid_" + tag;
       }
-      function countWishesWithSameId(id){
-        var t = String(id || "").trim();
-        if(!t) return 0;
-        var list = wishListCache || [];
-        var n = 0;
-        for(var i = 0; i < list.length; i++){
-          if(wishIdStr(list[i]) === t) n++;
-        }
-        return n;
+      function wishVoteStorageKey(w){
+        return wishVoteStorageKeyWithFingerprint(w, wishVoteFingerprintSource);
+      }
+      function wishVoteStorageKeyLegacy(w){
+        return wishVoteStorageKeyWithFingerprint(w, wishVoteFingerprintSourceLegacy);
       }
       function readWishVoteFromStorage(w){
         if(!w) return false;
         try {
-          if(localStorage.getItem(wishVoteStorageKey(w))) return true;
-          var id = wishIdStr(w);
-          if(id && countWishesWithSameId(id) <= 1 && localStorage.getItem("wish_voted_" + id)) return true;
+          var k = wishVoteStorageKey(w);
+          var kLegacy = wishVoteStorageKeyLegacy(w);
+          return !!(localStorage.getItem(k) || (kLegacy !== k && localStorage.getItem(kLegacy)));
         } catch(e) {}
         return false;
       }
@@ -670,8 +681,6 @@
         if(!w) return;
         try {
           localStorage.setItem(wishVoteStorageKey(w), "1");
-          var id = wishIdStr(w);
-          if(id && countWishesWithSameId(id) <= 1) localStorage.setItem("wish_voted_" + id, "1");
         } catch(e) {}
       }
       function resolveWishFromCard(card){
@@ -696,9 +705,15 @@
         var sorted = [];
         for(var k in groups){
           var arr = groups[k];
-          var first = arr[0];
-          first._groupSize = arr.length;
-          sorted.push(first);
+          var rep = arr[0];
+          for(var gi = arr.length - 1; gi >= 0; gi--){
+            if(wishIdStr(arr[gi])){
+              rep = arr[gi];
+              break;
+            }
+          }
+          rep._groupSize = arr.length;
+          sorted.push(rep);
         }
         return sorted;
       }
@@ -772,7 +787,6 @@
           if(cta){
             var vkCard = card.getAttribute("data-vote-key");
             var voted = w ? readWishVoteFromStorage(w) : !!(vkCard && localStorage.getItem(vkCard));
-            if(!voted && !w && id) voted = !!localStorage.getItem("wish_voted_" + id);
             if(voted){
               cta.classList.remove("active");
               cta.classList.add("done");
@@ -911,6 +925,10 @@
           if(pag0){ pag0.style.display = "none"; pag0.innerHTML = ""; }
           return;
         }
+        list.forEach(function(row){
+          var cid = wishIdStr(row);
+          if(cid) row.id = cid;
+        });
         list = groupAndSortWishList(list);
         wishListCache = list;
         var hint = document.getElementById("wishListLoadHint");
@@ -1893,12 +1911,13 @@
           return;
         }
         try {
-          if(wishRef){
-            if(readWishVoteFromStorage(wishRef)){
-              if(WISH_SUBMIT_URL) return Promise.reject(new Error("您已對此許願集氣過了"));
-              return;
+          var wDup = wishRef;
+          if(!wDup){
+            for(var wi = 0; wi < wishListCache.length; wi++){
+              if(wishIdStr(wishListCache[wi]) === vid){ wDup = wishListCache[wi]; break; }
             }
-          } else if(localStorage.getItem("wish_voted_" + vid)){
+          }
+          if(wDup && readWishVoteFromStorage(wDup)){
             if(WISH_SUBMIT_URL) return Promise.reject(new Error("您已對此許願集氣過了"));
             return;
           }
