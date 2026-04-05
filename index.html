@@ -1057,7 +1057,12 @@
           image3: patch.image3 || ""
         };
         return gasPostJson(WISH_SUBMIT_URL, payload, 45000)
-          .then(function(res){ return res.json().catch(function(){ return {}; }).then(function(data){ if(!res.ok || data.ok === false) return Promise.reject(new Error(data.error || "更新失敗")); return data; }); });
+          .then(function(res){
+            return parseGasResponse(res).then(function(data){
+              if(!res.ok || (data && data.ok === false)) return Promise.reject(new Error((data && data.error) || "更新失敗"));
+              return data;
+            });
+          });
       }
       function bindWishCardDetailClick(){
         document.querySelectorAll(".wish-card").forEach(function(card){
@@ -1630,6 +1635,38 @@
           body: body
         }, timeoutMs != null ? timeoutMs : 55000);
       }
+      /** GAS 回應一律先 text 再解析；勿用 res.json()（若回應被轉成 data=… 字串會拋 SyntaxError） */
+      function parseGasResponse(res){
+        return res.text().then(function(text){
+          var t = String(text != null ? text : "").trim();
+          if(!t){
+            if(!res.ok) throw new Error("HTTP " + res.status + "（無內容）");
+            return {};
+          }
+          var first = t.charAt(0);
+          if(first === "{" || first === "["){
+            try { return JSON.parse(t); } catch(e){
+              throw new Error("伺服器回傳的 JSON 無法解析");
+            }
+          }
+          if(t.indexOf("data=") === 0){
+            var rest = t.substring(5);
+            var amp = rest.indexOf("&");
+            if(amp !== -1) rest = rest.substring(0, amp);
+            try {
+              return JSON.parse(decodeURIComponent(rest));
+            } catch(e2){
+              throw new Error("回應為 data= 格式但內容不是合法 JSON（請確認 GAS 部署與網址）");
+            }
+          }
+          if(t.indexOf("<!DOCTYPE") === 0 || t.indexOf("<html") !== -1){
+            throw new Error("伺服器回傳網頁而非 JSON，請確認 Apps Script 已部署為「網路應用程式」");
+          }
+          try { return JSON.parse(t); } catch(e3){
+            throw new Error("無法解析回應：" + (t.length > 100 ? t.slice(0, 100) + "…" : t));
+          }
+        });
+      }
 
       function uploadWishImages(){
         // 若未設定 Cloudinary，直接略過圖片上傳（回傳空陣列）
@@ -1744,7 +1781,13 @@
         function done(){ if(btn){ btn.disabled = false; btn.textContent = "送出許願"; } }
 
         gasPostJson(WISH_SUBMIT_URL, payload, submitTimeoutMs)
-          .then(function(res){ return res.json().catch(function(){ return {}; }).then(function(data){ if(!res.ok) return Promise.reject(new Error(data.error || "送出失敗")); return data; }); })
+          .then(function(res){
+            return parseGasResponse(res).then(function(data){
+              if(data && data.ok === false) return Promise.reject(new Error(data.error || "送出失敗"));
+              if(!res.ok) return Promise.reject(new Error((data && data.error) || "送出失敗"));
+              return data;
+            });
+          })
           .then(function(data){ onSuccess(data); done(); })
           .catch(function(err){
             var formUrl = WISH_SUBMIT_URL + (WISH_SUBMIT_URL.indexOf("?") >= 0 ? "&" : "?") + "source=form";
@@ -1913,18 +1956,19 @@
           nick: String(nick || "有人").slice(0, 40)
         };
         return gasPostJson(WISH_SUBMIT_URL, payload, 45000)
-          .then(function(res){ return res.json().catch(function(){ return {}; }); })
-          .then(function(data){
-            if(data && data.ok === false) return Promise.reject(new Error(data.error || "集氣失敗"));
-            if(data && data.feedAppended === false && data.feedAppendError){
-              console.warn("[集氣動態] 未寫入試算表：", data.feedAppendError, "（若使用獨立 Apps Script 專案，請在 許願池API.gs 設定 SPREADSHEET_ID）");
-            }
-            return {
-              ok: true,
-              supportCount: typeof data.supportCount === "number" ? data.supportCount : (parseInt(data.supportCount, 10) || 0),
-              feedAppended: data.feedAppended,
-              feedAppendError: data.feedAppendError
-            };
+          .then(function(res){
+            return parseGasResponse(res).then(function(data){
+              if(data && data.ok === false) return Promise.reject(new Error(data.error || "集氣失敗"));
+              if(data && data.feedAppended === false && data.feedAppendError){
+                console.warn("[集氣動態] 未寫入試算表：", data.feedAppendError, "（若使用獨立 Apps Script 專案，請在 許願池API.gs 設定 SPREADSHEET_ID）");
+              }
+              return {
+                ok: true,
+                supportCount: typeof data.supportCount === "number" ? data.supportCount : (parseInt(data.supportCount, 10) || 0),
+                feedAppended: data.feedAppended,
+                feedAppendError: data.feedAppendError
+              };
+            });
           });
       }
       function doSupport(wishId, title, nick, wishRef){
