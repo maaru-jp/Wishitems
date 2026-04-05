@@ -1,8 +1,8 @@
 /**
  * 許願池 API - Google Apps Script
  * 貼到試算表：擴充功能 → Apps Script → 新增 .gs 檔貼上後部署為「網路應用程式」
- * 重要：Sheet 第一列必須是標題 id, title, note, category, link, region, status, image1, image2, image3, supportCount, createdAt
- * 第二張分頁「集氣動態」：time, wishId, title, nick（由 addSupport 寫入；GET ?type=supportFeed 讀取）
+ * 重要：許願主表（建議分頁名「許願頁」）第 1 列：id, title, note, category, link, region, status, image1, image2, image3, supportCount, createdAt
+ * 「集氣動態」分頁：time, wishId, title, nick（集氣時 appendRow；勿把集氣動態拖到最左邊當第一個分頁，程式已改為依名稱找許願主表）
  */
 
 /**
@@ -21,7 +21,7 @@ function _getSpreadsheet_() {
     } catch (e0) {}
   }
   if (id) {
-    return SpreadsheetApp.openById(1lbAqCBnYuOkzLFyn3DWMdIbZRAm7kyvnOgILQzmMDEY);
+    return SpreadsheetApp.openById(id);
   }
   return SpreadsheetApp.getActiveSpreadsheet();
 }
@@ -99,20 +99,59 @@ function _findSheetByNormalizedName_(ss, wanted) {
 }
 
 /**
- * 取得集氣動態分頁：優先名稱「集氣動態」（含寬鬆比對），否則用第二個分頁；僅一張表時自動新增「集氣動態」
+ * 許願主表分頁（含 id、supportCount 欄）：勿只用 getSheets()[0]。
+ * 若「集氣動態」被拖到最左邊，[0] 會變成集氣表，導致集氣寫錯分頁、集氣動態仍空白。
+ */
+function _getWishSheet_(ss) {
+  if (!ss) return null;
+  var sh =
+    ss.getSheetByName("許願頁") ||
+    _findSheetByNormalizedName_(ss, "許願頁") ||
+    ss.getSheetByName("許願列表") ||
+    _findSheetByNormalizedName_(ss, "許願列表");
+  if (sh) return sh;
+  var sheets = ss.getSheets();
+  if (!sheets || sheets.length === 0) return null;
+  var si;
+  for (si = 0; si < sheets.length; si++) {
+    try {
+      var firstRow = sheets[si].getRange(1, 1, 1, 24).getValues()[0];
+      if (_wishIdColIndex_(firstRow) !== -1 && _supportCountColIndex_(firstRow) !== -1) {
+        return sheets[si];
+      }
+    } catch (e1) {}
+  }
+  return sheets[0];
+}
+
+/**
+ * 取得集氣動態分頁。勿盲用 sheets[1]：若中間有「公布欄」等，[1] 不是集氣動態，寫入會錯頁。
  */
 function _getFeedSheet_(ss) {
   if (!ss) return null;
   var sh = ss.getSheetByName("集氣動態") || _findSheetByNormalizedName_(ss, "集氣動態");
   if (sh) return sh;
   var sheets = ss.getSheets();
-  if (sheets.length > 1) {
-    return sheets[1];
+  var i;
+  var nm;
+  for (i = 0; i < sheets.length; i++) {
+    nm = String(sheets[i].getName()).replace(/\s/g, "");
+    if (nm === "集氣動態") return sheets[i];
+  }
+  for (i = 0; i < sheets.length; i++) {
+    nm = String(sheets[i].getName()).replace(/\s/g, "");
+    if (nm.indexOf("集氣") !== -1 && nm.indexOf("動態") !== -1) return sheets[i];
+  }
+  var wishSh = _getWishSheet_(ss);
+  if (sheets.length === 2 && wishSh) {
+    for (i = 0; i < sheets.length; i++) {
+      if (sheets[i].getSheetId() !== wishSh.getSheetId()) return sheets[i];
+    }
   }
   try {
     return ss.insertSheet("集氣動態");
   } catch (err) {
-    return _findSheetByNormalizedName_(ss, "集氣動態") || ss.getSheetByName("集氣動態");
+    return ss.getSheetByName("集氣動態") || _findSheetByNormalizedName_(ss, "集氣動態") || null;
   }
 }
 
@@ -130,7 +169,8 @@ function _ensureFeedHeaders_(sh) {
 function _supportFeedFromWishSheet_(ss) {
   var out = [];
   try {
-    var sheet = ss.getSheets()[0];
+    var sheet = _getWishSheet_(ss);
+    if (!sheet) return out;
     var data = sheet.getDataRange().getValues();
     if (!data || data.length < 2) return out;
     var headers = data[0];
@@ -201,9 +241,12 @@ function doGet(e) {
     return _getSupportFeed(callback);
   }
 
-  // 許願列表一律讀「第一個分頁」，避免編輯器目前選在「集氣動態」時讀錯表
+  // 許願列表讀「許願主表」分頁（見 _getWishSheet_）
   var ss = _getSpreadsheet_();
-  var sheet = ss.getSheets()[0];
+  var sheet = _getWishSheet_(ss);
+  if (!sheet) {
+    return _jsonResponse({ wishes: [] }, callback);
+  }
   var data = [];
   try {
     data = sheet.getDataRange().getValues();
@@ -249,10 +292,10 @@ function _getSupportFeed(callback) {
       var data = sh.getDataRange().getValues();
       if (data && data.length >= 2) {
         var headers = data[0];
-        var timeIdx = headers.indexOf("time");
-        var wishIdIdx = headers.indexOf("wishId");
-        var titleIdx = headers.indexOf("title");
-        var nickIdx = headers.indexOf("nick");
+        var timeIdx = _colIndex_(headers, ["time", "Time", "TIME", "時間"]);
+        var wishIdIdx = _colIndex_(headers, ["wishId", "WishId", "wish_id", "wishid"]);
+        var titleIdx = _colIndex_(headers, ["title", "Title", "TITLE"]);
+        var nickIdx = _colIndex_(headers, ["nick", "Nick", "NICK", "暱稱"]);
         if (timeIdx !== -1 && wishIdIdx !== -1) {
           for (var i = 1; i < data.length; i++) {
             var row = data[i];
@@ -358,7 +401,10 @@ function doPost(e) {
         return _postResponse({ ok: false, error: "缺少許願編號" }, returnHtml);
       }
       var ss = _getSpreadsheet_();
-      var sheet = ss.getSheets()[0];
+      var sheet = _getWishSheet_(ss);
+      if (!sheet) {
+        return _postResponse({ ok: false, error: "找不到許願主表分頁（請確認有「許願頁」或含 id／supportCount 標題之分頁）" }, returnHtml);
+      }
       var data = sheet.getDataRange().getValues();
       if (!data || data.length < 2) {
         return _postResponse({ ok: false, error: "找不到許願資料" }, returnHtml);
@@ -418,7 +464,8 @@ function doPost(e) {
           ok: true,
           supportCount: newCount,
           feedAppended: feedAppended,
-          feedAppendError: feedAppendError || undefined
+          feedAppendError: feedAppendError || undefined,
+          feedSheetName: feedSheet ? String(feedSheet.getName()) : ""
         },
         returnHtml
       );
@@ -434,7 +481,10 @@ function doPost(e) {
   // 管理員：更新單筆許願（狀態 / 圖片）
   if (json.action === "updateWish") {
     try {
-      var sheet = _getSpreadsheet_().getSheets()[0];
+      var sheet = _getWishSheet_(_getSpreadsheet_());
+      if (!sheet) {
+        return _postResponse({ ok: false, error: "找不到許願主表分頁" }, returnHtml);
+      }
       var data = sheet.getDataRange().getValues();
       if (!data || data.length < 2) {
         return _postResponse({ ok: false, error: "目前沒有資料可更新" }, returnHtml);
@@ -482,7 +532,11 @@ function doPost(e) {
   }
 
   try {
-    var sheet = _getSpreadsheet_().getSheets()[0];
+    var ssNew = _getSpreadsheet_();
+    var sheet = _getWishSheet_(ssNew);
+    if (!sheet) {
+      return _postResponse({ ok: false, error: "找不到許願主表分頁" }, returnHtml);
+    }
     var newId = _nextWishId_(sheet);
     var now = Utilities.formatDate(new Date(), "Asia/Taipei", "yyyy-MM-dd HH:mm");
 
