@@ -316,21 +316,27 @@ function doPost(e) {
   if (params.source === "form" && params.data) {
     returnHtml = true;
     try {
-      json = JSON.parse(e.parameter.data);
+      json = JSON.parse(params.data);
     } catch (err) {
       return _postResponse({ ok: false, error: "資料格式錯誤" }, returnHtml);
     }
-  } else if (e && e.postData && e.postData.contents) {
-    try {
-      json = JSON.parse(e.postData.contents);
-    } catch (err) {
-      return _postResponse({ ok: false, error: err.toString() }, returnHtml);
-    }
-  } else if (params.data && (!params.source || params.source !== "form")) {
+  } else if (params.data) {
+    // application/x-www-form-urlencoded 的欄位 data（必須先於 postData 解析，否則 raw body 為 data=%7B... 會 JSON.parse 失敗）
     try {
       json = JSON.parse(params.data);
     } catch (err) {
       return _postResponse({ ok: false, error: "資料格式錯誤" }, returnHtml);
+    }
+  } else if (e && e.postData && e.postData.contents) {
+    var rawPost = String(e.postData.contents).trim();
+    if (rawPost.charAt(0) === "{" || rawPost.charAt(0) === "[") {
+      try {
+        json = JSON.parse(rawPost);
+      } catch (err) {
+        return _postResponse({ ok: false, error: err.toString() }, returnHtml);
+      }
+    } else {
+      return _postResponse({ ok: false, error: "POST 無法解析：請用表單欄位 data 或純 JSON（text/plain）" }, returnHtml);
     }
   }
 
