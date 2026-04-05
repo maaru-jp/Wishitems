@@ -543,6 +543,8 @@
       var currentWishCategory = "";
       /** 集氣動態：有設定 WISH_LIST_URL 時由伺服器載入；null 表示尚未從 API 寫入過（顯示時改以許願表合成，不用各裝置不同的 localStorage） */
       var supportFeedCache = null;
+      /** 本裝置剛送出的集氣（與試算表 GET 合併，避免輪詢／重新載入把即時列蓋掉） */
+      var feedBoostPending = [];
       /** 最近一次集氣 API 回傳「集氣動態分頁未寫入」時顯示於跑馬燈下方（成功同步後清除） */
       var lastFeedAppendWarning = "";
       /** 防止手機連點／雙擊重複開啟集氣暱稱視窗（依 wishId 節流） */
@@ -1157,7 +1159,7 @@
         supportFeedPollTimer = setInterval(function(){
           if(document.hidden) return;
           loadWishList({ silent: true });
-        }, 35000);
+        }, 15000);
       }
       document.addEventListener("visibilitychange", function(){
         if(document.hidden || !WISH_LIST_URL) return;
@@ -1170,6 +1172,22 @@
         return null;
       }
       /** 伺服器回傳若比 POST 慢半拍，GET 可能仍是舊的；合併剛集氣的那一筆避免被蓋掉 */
+      function pruneFeedBoostPending(){
+        var now = Date.now();
+        var maxAge = 7200000;
+        feedBoostPending = feedBoostPending.filter(function(x){
+          return now - feedItemTime(x) < maxAge;
+        }).slice(0, 50);
+      }
+      /** 將待合併集氣依序併入（由舊到新，讓最新一筆最後 unshift 後在最上方） */
+      function mergeAllFeedBoostPendingInto(baseMerged){
+        var merged = baseMerged != null ? baseMerged.slice() : [];
+        var pi;
+        for(pi = feedBoostPending.length - 1; pi >= 0; pi--){
+          merged = mergePendingSupportFeed(merged, feedBoostPending[pi]);
+        }
+        return merged;
+      }
       function mergePendingSupportFeed(serverFeed, pending){
         if(!pending || !serverFeed) return serverFeed || [];
         var has = false;
@@ -1244,8 +1262,7 @@
         merged.sort(function(a, b){ return feedItemTime(b) - feedItemTime(a); });
         return merged.slice(0, FEED_MAX);
       }
-      /** mergeLatest：集氣成功後傳入，避免快取／延遲導致最新一筆消失 */
-      function loadSupportFeed(mergeLatest){
+      function loadSupportFeed(){
         if(!WISH_LIST_URL){
           supportFeedCache = null;
           return Promise.resolve();
@@ -1254,10 +1271,12 @@
         var url = WISH_LIST_URL + sep + "type=supportFeed&feed=1&_ts=" + Date.now();
         var applyMerged = function(rawFeed){
           lastFeedAppendWarning = "";
+          pruneFeedBoostPending();
           var feed = rawFeed != null ? rawFeed : [];
           var syn = buildSyntheticFeedFromWishList();
           var merged = mergeEventAndWishFeed(feed, syn);
-          supportFeedCache = mergeLatest ? mergePendingSupportFeed(merged, mergeLatest) : merged;
+          merged = mergeAllFeedBoostPendingInto(merged);
+          supportFeedCache = merged.slice(0, FEED_MAX);
           syncSupportFeedToLocalStorage();
         };
         return fetch(url, { cache: "no-store" })
@@ -1277,7 +1296,6 @@
             applyMerged([]);
           })
           .catch(function(){
-            var pendingMerge = mergeLatest;
             return new Promise(function(resolve){
               var finished = false;
               function done(){
@@ -1288,9 +1306,11 @@
               window.__wishPoolFeedCallback = function(data){
                 var feed = parseSupportFeedPayload(data);
                 var raw = feed !== null ? feed : [];
+                pruneFeedBoostPending();
                 var syn = buildSyntheticFeedFromWishList();
                 var merged = mergeEventAndWishFeed(raw.length ? raw : [], syn);
-                supportFeedCache = pendingMerge ? mergePendingSupportFeed(merged, pendingMerge) : merged;
+                merged = mergeAllFeedBoostPendingInto(merged);
+                supportFeedCache = merged.slice(0, FEED_MAX);
                 syncSupportFeedToLocalStorage();
                 var s = document.getElementById("wishFeedJsonpScript");
                 if(s) s.remove();
@@ -1301,9 +1321,11 @@
               script.id = "wishFeedJsonpScript";
               script.src = url + sep2 + "callback=__wishPoolFeedCallback&_ts=" + Date.now();
               script.onerror = function(){
+                pruneFeedBoostPending();
                 var syn = buildSyntheticFeedFromWishList();
                 var merged = mergeEventAndWishFeed([], syn);
-                supportFeedCache = pendingMerge ? mergePendingSupportFeed(merged, pendingMerge) : merged;
+                merged = mergeAllFeedBoostPendingInto(merged);
+                supportFeedCache = merged.slice(0, FEED_MAX);
                 syncSupportFeedToLocalStorage();
                 done();
               };
@@ -1949,18 +1971,30 @@
               nick: nickDisp
             };
             if(WISH_LIST_URL){
-              if(!Array.isArray(supportFeedCache)) supportFeedCache = [];
-              supportFeedCache.unshift(optimistic);
-              supportFeedCache = supportFeedCache.slice(0, FEED_MAX);
-              renderFeed();
+              feedBoostPending.unshift(optimistic);
+              feedBoostPending = feedBoostPending.slice(0, 50);
+              pruneFeedBoostPending();
+              var syn0 = buildSyntheticFeedFromWishList();
+              var seed = (supportFeedCache !== null && supportFeedCache.length)
+                ? supportFeedCache.slice()
+                : mergeEventAndWishFeed([], syn0);
+              supportFeedCache = mergeAllFeedBoostPendingInto(seed).slice(0, FEED_MAX);
+              syncSupportFeedToLocalStorage();
+              try{
+                requestAnimationFrame(function(){ renderFeed(); });
+              }catch(eRAF){
+                renderFeed();
+              }
             }
             try{
               var loc = getFeed();
               loc.unshift(optimistic);
               localStorage.setItem(STORAGE_KEY, JSON.stringify(loc.slice(0, FEED_MAX)));
             }catch(e){}
-            // 勿 await loadSupportFeed：會多等一次試算表往返，暱稱視窗會卡住很久才關
-            loadSupportFeed(optimistic).then(function(){ renderFeed(); }).catch(function(){});
+            // 背景同步試算表；即時畫面已含 feedBoostPending，勿阻塞關閉暱稱視窗
+            if(WISH_LIST_URL){
+              loadSupportFeed().then(function(){ renderFeed(); }).catch(function(){ renderFeed(); });
+            }
           });
         }
         var counts = getCounts();
