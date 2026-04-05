@@ -26,6 +26,35 @@ function _getSpreadsheet_() {
   return SpreadsheetApp.getActiveSpreadsheet();
 }
 
+/** 標題儲存格去空白（避免 "id " 導致讀不到欄位） */
+function _trimCell_(v) {
+  return String(v != null ? v : "").replace(/^\s+|\s+$/g, "");
+}
+
+/**
+ * 依候選標題找欄位索引（不分大小寫、比對前會 trim）
+ */
+function _colIndex_(headers, candidates) {
+  if (!headers || !candidates) return -1;
+  var i, j, h, w;
+  for (j = 0; j < candidates.length; j++) {
+    w = _trimCell_(candidates[j]).toLowerCase();
+    for (i = 0; i < headers.length; i++) {
+      h = _trimCell_(headers[i]).toLowerCase();
+      if (h === w) return i;
+    }
+  }
+  return -1;
+}
+
+function _wishIdColIndex_(headers) {
+  return _colIndex_(headers, ["id", "wishId", "wish_id", "編號"]);
+}
+
+function _supportCountColIndex_(headers) {
+  return _colIndex_(headers, ["supportCount", "support_count", "集氣"]);
+}
+
 /**
  * 新許願編號：取 id 欄位最大值 + 1（勿再用 lastRow，刪列後會與既有 id 重複，導致前台多張卡共用同一編號、集氣鎖錯）
  */
@@ -39,7 +68,7 @@ function _nextWishId_(sheet) {
   }
   if (!data || data.length < 2) return 1;
   var headers = data[0];
-  var idIdx = headers.indexOf("id");
+  var idIdx = _wishIdColIndex_(headers);
   if (idIdx === -1) return Math.max(1, data.length - 1);
   var maxId = 0;
   var r;
@@ -105,10 +134,10 @@ function _supportFeedFromWishSheet_(ss) {
     var data = sheet.getDataRange().getValues();
     if (!data || data.length < 2) return out;
     var headers = data[0];
-    var idIdx = headers.indexOf("id");
-    var titleIdx = headers.indexOf("title");
-    var scIdx = headers.indexOf("supportCount");
-    var createdIdx = headers.indexOf("createdAt");
+    var idIdx = _wishIdColIndex_(headers);
+    var titleIdx = _colIndex_(headers, ["title", "Title"]);
+    var scIdx = _supportCountColIndex_(headers);
+    var createdIdx = _colIndex_(headers, ["createdAt", "CreatedAt", "created_at"]);
     if (idIdx === -1 || scIdx === -1) return out;
     for (var r = 1; r < data.length; r++) {
       var row = data[r];
@@ -187,13 +216,21 @@ function doGet(e) {
   var headers = data[0];
   var rows = data.slice(1);
   var list = [];
+  var idCol = _wishIdColIndex_(headers);
   for (var i = 0; i < rows.length; i++) {
     var row = rows[i];
     var obj = {};
     for (var j = 0; j < headers.length; j++) {
-      var key = headers[j];
+      var key = _trimCell_(headers[j]);
+      if (!key) continue;
       var val = row[j];
-      obj[key] = (val != null && val !== "") ? val : "";
+      obj[key] = val != null && val !== "" ? val : "";
+    }
+    if (idCol >= 0) {
+      var cid = row[idCol];
+      obj.id = cid != null && cid !== "" ? cid : "";
+    } else if (obj.id == null) {
+      obj.id = "";
     }
     list.push(obj);
   }
@@ -321,14 +358,16 @@ function doPost(e) {
         return _postResponse({ ok: false, error: "找不到許願資料" }, returnHtml);
       }
       var headers = data[0];
-      var idIdx = headers.indexOf("id");
-      var supportCountIdx = headers.indexOf("supportCount");
+      var idIdx = _wishIdColIndex_(headers);
+      var supportCountIdx = _supportCountColIndex_(headers);
       if (idIdx === -1 || supportCountIdx === -1) {
         return _postResponse({ ok: false, error: "試算表缺少 id 或 supportCount 欄位" }, returnHtml);
       }
+      var wishIdNorm = String(wishId).replace(/^\s+|\s+$/g, "");
       var targetRow = -1;
       for (var i = 1; i < data.length; i++) {
-        if (String(data[i][idIdx]) === wishId) {
+        var cellId = data[i][idIdx];
+        if (String(cellId != null ? cellId : "").replace(/^\s+|\s+$/g, "") === wishIdNorm) {
           targetRow = i + 1;
           break;
         }
@@ -395,18 +434,18 @@ function doPost(e) {
         return _postResponse({ ok: false, error: "目前沒有資料可更新" }, returnHtml);
       }
       var headers = data[0];
-      var idIndex = headers.indexOf("id");
-      var statusIndex = headers.indexOf("status");
-      var img1Index = headers.indexOf("image1");
-      var img2Index = headers.indexOf("image2");
-      var img3Index = headers.indexOf("image3");
+      var idIndex = _wishIdColIndex_(headers);
+      var statusIndex = _colIndex_(headers, ["status", "Status"]);
+      var img1Index = _colIndex_(headers, ["image1", "Image1"]);
+      var img2Index = _colIndex_(headers, ["image2", "Image2"]);
+      var img3Index = _colIndex_(headers, ["image3", "Image3"]);
       if (idIndex === -1) {
         return _postResponse({ ok: false, error: "找不到 id 欄位" }, returnHtml);
       }
       var targetRow = -1;
-      var targetId = String(json.id || "");
+      var targetId = String(json.id || "").replace(/^\s+|\s+$/g, "");
       for (var i = 1; i < data.length; i++) {
-        var rowId = String(data[i][idIndex]);
+        var rowId = String(data[i][idIndex] != null ? data[i][idIndex] : "").replace(/^\s+|\s+$/g, "");
         if (rowId === targetId) {
           targetRow = i + 1; // 轉成試算表列號（從 1 開始）
           break;
