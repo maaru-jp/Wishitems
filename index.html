@@ -335,7 +335,11 @@
     .wish-detail-modal .detail-cta.active{ background: var(--wish); color: #fff; }
     .wish-detail-modal .detail-cta.done{ background: #f3f4f6; color: var(--muted); cursor: default; }
 
-    .feed-card h3{ font-size: 16px; font-weight: 900; margin: 0 0 8px; display: flex; align-items: center; gap: 8px; }
+    .feed-card h3{ font-size: 16px; font-weight: 900; margin: 0 0 6px; display: flex; align-items: center; gap: 8px; }
+    .feed-section-hint{
+      font-size: 13px; font-weight: 700; color: #6b7280; margin: 0 0 10px; line-height: 1.45;
+      display: block;
+    }
     #feedListMeta.feed-list-meta{
       font-size: 14px; color: var(--text); margin: 0 0 12px; font-weight: 800;
       line-height: 1.55; min-height: 1.5em; display: block; word-break: break-word;
@@ -449,7 +453,8 @@
 
     <section class="feed-section">
       <div class="feed-card">
-        <h3>❤️ 集氣動態 <span style="font-size:12px;font-weight:800;color:var(--muted);">（誰為哪個許願商品 +1）</span></h3>
+        <h3>❤️ 集氣動態</h3>
+        <p class="feed-section-hint">顯示：誰為哪一則許願商品按了 +1 集氣（闆闆與顧客皆可見）</p>
         <div id="feedListMeta" class="feed-list-meta" aria-live="polite">載入集氣動態中…</div>
         <div class="feed-ticker fade-in" id="feedTicker" aria-live="polite">
           <ul class="feed-list" id="supportFeed">
@@ -1627,14 +1632,17 @@
       }
 
       /**
-       * POST 到 GAS Web App：純 JSON（text/plain），後端以 e.postData.contents 解析。
+       * POST 到 GAS Web App：以表單欄位 data= 送 JSON（application/x-www-form-urlencoded）。
+       * 原因：對 script.google.com/exec 的 POST 常經 302 重導，純 JSON body 在部分瀏覽器／重導後會遺失，
+       * 導致後端收不到 addSupport／集氣動態無法寫入試算表。後端 doPost 會優先解析 e.parameter.data。
        * 回應解析見 parseGasResponse（勿用 res.json()，避免非純 JSON 時拋 SyntaxError）。
        */
       function gasPostJson(url, payloadObj, timeoutMs){
+        var body = "data=" + encodeURIComponent(JSON.stringify(payloadObj));
         return wishFetchWithTimeout(url, {
           method: "POST",
-          headers: { "Content-Type": "text/plain; charset=utf-8" },
-          body: JSON.stringify(payloadObj)
+          headers: { "Content-Type": "application/x-www-form-urlencoded; charset=utf-8" },
+          body: body
         }, timeoutMs != null ? timeoutMs : 55000);
       }
       /** 正規化回應字串（BOM／空白會讓 data= 判斷失敗，誤觸 JSON.parse 整段） */
