@@ -1959,7 +1959,8 @@
               loc.unshift(optimistic);
               localStorage.setItem(STORAGE_KEY, JSON.stringify(loc.slice(0, FEED_MAX)));
             }catch(e){}
-            return loadSupportFeed(optimistic).then(renderFeed);
+            // 勿 await loadSupportFeed：會多等一次試算表往返，暱稱視窗會卡住很久才關
+            loadSupportFeed(optimistic).then(function(){ renderFeed(); }).catch(function(){});
           });
         }
         var counts = getCounts();
@@ -2022,11 +2023,15 @@
           submitNickLocked = true;
           if(modalOk) modalOk.disabled = true;
           if(modalSkip) modalSkip.disabled = true;
-          p.then(function(){ if(cb) cb(); }).catch(function(err){ alert("集氣失敗，請稍後再試。\n" + (err && err.message ? err.message : "")); }).finally(function(){
+          p.then(function(){
+            if(cb) cb();
+            closeNickModal();
+          }).catch(function(err){
+            alert("集氣失敗，請稍後再試。\n" + (err && err.message ? err.message : ""));
+          }).finally(function(){
             submitNickLocked = false;
             if(modalOk) modalOk.disabled = false;
             if(modalSkip) modalSkip.disabled = false;
-            closeNickModal();
           });
         } else {
           if(cb) cb();
