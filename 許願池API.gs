@@ -21,7 +21,7 @@ function _getSpreadsheet_() {
     } catch (e0) {}
   }
   if (id) {
-    return SpreadsheetApp.openById(ID);
+    return SpreadsheetApp.openById(id);
   }
   return SpreadsheetApp.getActiveSpreadsheet();
 }
@@ -159,8 +159,18 @@ function _getFeedSheet_(ss) {
 function _ensureFeedHeaders_(sh) {
   if (!sh) return;
   if (sh.getLastRow() < 1) {
-    sh.appendRow(["time", "wishId", "title", "nick"]);
+    sh.getRange(1, 1, 1, 4).setValues([["time", "wishId", "title", "nick"]]);
   }
+}
+
+/**
+ * 寫入一筆集氣事件（優先用明確列號，比 appendRow 不受篩選／部分環境怪癖影響）
+ */
+function _appendFeedEventRow_(feedSheet, timeVal, wishIdStr, titleSnap, nickVal) {
+  _ensureFeedHeaders_(feedSheet);
+  var lr = feedSheet.getLastRow();
+  var dest = lr + 1;
+  feedSheet.getRange(dest, 1, dest, 4).setValues([[timeVal, String(wishIdStr), titleSnap, nickVal]]);
 }
 
 /**
@@ -372,11 +382,25 @@ function doPost(e) {
     }
   } else if (e && e.postData && e.postData.contents) {
     var rawPost = String(e.postData.contents).trim();
+    // 純 JSON（text/plain）優先
     if (rawPost.charAt(0) === "{" || rawPost.charAt(0) === "[") {
       try {
         json = JSON.parse(rawPost);
       } catch (err) {
         return _postResponse({ ok: false, error: err.toString() }, returnHtml);
+      }
+    } else if (rawPost.indexOf("data=") !== -1) {
+      // 表單 raw body：data=%7B...%7D（參數未進 e.parameter 時仍可解析）
+      var dataPart = rawPost.substring(rawPost.indexOf("data=") + 5);
+      var amp = dataPart.indexOf("&");
+      if (amp !== -1) dataPart = dataPart.substring(0, amp);
+      try {
+        dataPart = decodeURIComponent(dataPart.replace(/\+/g, " "));
+      } catch (decErr) {}
+      try {
+        json = JSON.parse(dataPart);
+      } catch (err) {
+        return _postResponse({ ok: false, error: "資料格式錯誤" }, returnHtml);
       }
     } else {
       return _postResponse({ ok: false, error: "POST 無法解析：請用表單欄位 data 或純 JSON（text/plain）" }, returnHtml);
@@ -435,7 +459,6 @@ function doPost(e) {
       var feedAppended = false;
       var feedAppendError = "";
       if (feedSheet) {
-        _ensureFeedHeaders_(feedSheet);
         var titleSnap = String(json.title || "").trim();
         if (titleSnap.length > 200) {
           titleSnap = titleSnap.substring(0, 200);
@@ -447,13 +470,19 @@ function doPost(e) {
         if (!nickVal) {
           nickVal = "有人";
         }
-        // 使用 Date 物件寫入，試算表顯示為日期時間；讀取時 _getSupportFeed 會正確轉成毫秒
         var timeVal = new Date();
         try {
-          feedSheet.appendRow([timeVal, wishId, titleSnap, nickVal]);
+          _appendFeedEventRow_(feedSheet, timeVal, wishId, titleSnap, nickVal);
           feedAppended = true;
         } catch (appendErr) {
           feedAppendError = String(appendErr);
+          try {
+            feedSheet.appendRow([timeVal, wishId, titleSnap, nickVal]);
+            feedAppended = true;
+            feedAppendError = "";
+          } catch (appendErr2) {
+            feedAppendError = String(appendErr) + " | " + String(appendErr2);
+          }
         }
       } else {
         feedAppendError = "找不到集氣動態分頁";
